@@ -1,0 +1,18 @@
+[project]
+name = "lean-strategies"
+version = "0.1.0"
+description = "LEAN Python ports of the sp500 SPY allocation strategies"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "pandas==2.2.3",
+    "wrapt==1.16.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "quantconnect-stubs",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
