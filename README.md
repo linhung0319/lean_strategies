@@ -54,8 +54,8 @@ figures already measured from the equivalent C# algorithm:
 
 Same data, parameters and fee model, so these should match. The other six
 strategies have no such anchor; compare their relative ordering against
-`../sp500/results/analysis_report.md`, remembering that the Python engine
-executes at the same day's close and charges no fees.
+`../sp500/results/analysis_report.md`, remembering that the original pandas
+backtester executes at the same day's close and charges no fees.
 
 ## Tests
 

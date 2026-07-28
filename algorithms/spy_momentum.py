@@ -40,6 +40,14 @@ class SpyMomentum(QCAlgorithm):
         if self.is_warming_up or not self.closes.is_ready:
             return
 
+        # The original (sp500/strategies/momentum.py:44-52) records
+        # _last_check_month before checking whether it has enough history,
+        # so its first evaluation waits for the next month boundary after
+        # warm-up. Here the history guard runs first, so the first
+        # evaluation instead lands on the first post-warm-up bar, whatever
+        # day of the month that is. That is a one-time difference of at
+        # most one month at the very start of a backtest and is accepted,
+        # not a bug.
         month = (self.time.year, self.time.month)
         if month == self._last_check_month:
             return

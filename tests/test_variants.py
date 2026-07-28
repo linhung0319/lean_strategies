@@ -18,14 +18,30 @@ def test_every_algorithm_module_imports_and_defines_its_class():
         assert hasattr(module, class_name), f"{module_name}.{class_name}"
 
 
+# How each algorithm coerces the raw (stringified) parameter value, keyed by
+# parameter name — mirrors the `int(...)`, `float(...)` and
+# `str(...).upper()` calls in algorithms/*.py's initialize().
+INT_PARAMETERS = {"ma_period", "lookback", "lookback_months"}
+UPPERCASE_STRING_PARAMETERS = {"frequency"}
+
+
+def _coerce(key, value):
+    if key in UPPERCASE_STRING_PARAMETERS:
+        return str(value).upper()
+    if key in INT_PARAMETERS:
+        return int(value)
+    return float(value)
+
+
 def test_every_variant_parameter_is_accepted_by_its_algorithm():
     for name, (module_name, parameters) in VARIANTS.items():
         module = importlib.import_module(module_name)
         algorithm = getattr(module, ALGORITHM_CLASSES[module_name])()
         algorithm._parameters = {k: str(v) for k, v in parameters.items()}
         algorithm.initialize()
-        for key in parameters:
+        for key, value in parameters.items():
             assert hasattr(algorithm, key), f"{name}: {key}"
+            assert getattr(algorithm, key) == _coerce(key, value), f"{name}: {key}"
 
 
 def test_slugs_are_unique_and_filesystem_safe():

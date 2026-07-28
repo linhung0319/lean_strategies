@@ -38,19 +38,18 @@ def test_weight_is_target_vol_over_realised_vol():
 
 
 def test_weight_is_clamped_to_the_maximum_in_calm_markets():
-    # A steady ~1% compounding drift gives near-zero vol -> huge raw weight.
-    # NOTE: deviates from the brief's literal 103.0301 by one decimal digit.
-    # With 103.0301, 101/100-1, 102.01/101-1, and 103.0301/102.01-1 are
-    # bit-for-bit identical IEEE754 doubles, so sample variance over every
-    # 2-return window is exactly 0.0 (not merely small), which correctly
-    # trips the "zero volatility -> skip trade" rule and leaves algo.orders
-    # empty, contradicting this test's own intent (a clamped trade). This
-    # one-digit perturbation preserves the "steady ~1% drift, near-zero
-    # vol" narrative while breaking the coincidental float tie.
+    # A linear (not compounding) drift is used deliberately: with an exact
+    # ~1% compounding series the per-bar returns are bit-for-bit identical
+    # IEEE754 doubles, so every 2-return window has variance exactly 0.0 and
+    # silently takes the zero-volatility skip branch instead of clamping.
+    # The linear series below gives each window a non-degenerate, non-zero
+    # variance (~4.9e-9 then ~4.71e-9), and in both cases the resulting
+    # volatility is small enough that raw_weight = 0.15 / vol clamps to the
+    # 0.90 ceiling. Verified with a standalone Python computation.
     algo = run_algorithm(
-        SpyVolAdjusted, [100.0, 101.0, 102.01, 103.0302], SHORT_LOOKBACK
+        SpyVolAdjusted, [100.0, 101.0, 102.0, 103.0], SHORT_LOOKBACK
     )
-    assert algo.orders[-1][2] == 0.90
+    assert [weight for _, _, weight in algo.orders] == [0.90, 0.90]
 
 
 def test_weight_is_clamped_to_the_minimum_in_violent_markets():
@@ -81,3 +80,4 @@ def test_defaults_match_the_original_strategy():
         0.10,
         0.90,
     )
+    assert algo.warm_up_period == 21

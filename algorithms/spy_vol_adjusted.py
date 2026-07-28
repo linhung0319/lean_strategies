@@ -43,7 +43,7 @@ class SpyVolAdjusted(QCAlgorithm):
 
         # Update the window before the warm-up guard: on_data runs during
         # warm-up, so guarding first would leave the window permanently empty.
-        if self._previous_close:
+        if self._previous_close is not None:
             self.returns.add(close / self._previous_close - 1.0)
         self._previous_close = close
 

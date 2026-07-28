@@ -38,8 +38,19 @@ def test_weights_are_configurable():
     assert [weight for _, _, weight in algo.orders] == [0.9]
 
 
+def test_moving_average_includes_the_current_bar():
+    # ma_period=3, prices [10, 20, 30, 22]. The inclusive SMA over the last
+    # three bars (20, 30, 22) is 24.0; close 22 < 24.0 applies below_weight.
+    # An exclusive/lagging SMA over the prior three bars (10, 20, 30) would
+    # be 20.0, giving 22 >= 20.0 and above_weight instead. This test fails
+    # if the SMA semantics ever regress to exclusive.
+    algo = run_algorithm(SpyMaTrend, [10.0, 20.0, 30.0, 22.0], SHORT_MA, warmup_bars=3)
+    assert [weight for _, _, weight in algo.orders] == [0.4]
+
+
 def test_defaults_match_the_original_strategy():
     algo = SpyMaTrend()
     algo._parameters = {}
     algo.initialize()
     assert (algo.ma_period, algo.above_weight, algo.below_weight) == (200, 0.60, 0.40)
+    assert algo.warm_up_period == 200
