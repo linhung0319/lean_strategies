@@ -37,7 +37,8 @@ The spec's `spy_vol_adjusted` section says `numpy.std(returns, ddof=1) * numpy.s
 **Interfaces:**
 - Consumes: nothing.
 - Produces:
-  - `tests/lean_stubs.py`: `install()` (registers a fake `AlgorithmImports` in `sys.modules`), `feed(algorithm, bars, warmup_bars=0)` where `bars` is a list of `(datetime, float)` and returns `None`, and the fake classes `QCAlgorithm`, `Resolution`, `RollingWindow`, `Slice`, `TradeBar`.
+  - `tests/lean_stubs.py`: `install()` (registers a fake `AlgorithmImports` in `sys.modules`), `feed(algorithm, bars, warmup_bars=0)` where `bars` is a list of `(datetime, float)` and returns `None`, `run_algorithm(algorithm_class, prices, parameters=None, warmup_bars=0)` returning the driven algorithm, and the fake classes `QCAlgorithm`, `Resolution`, `RollingWindow`, `Slice`, `TradeBar`.
+  - `run_algorithm` is the helper every later task's tests use; only Task 4 builds bars by hand, because its assertions depend on calendar dates.
   - Every algorithm instance exposes `algorithm.orders`, a list of `(datetime, symbol, weight)` tuples recording each `set_holdings` call. All later tasks assert against this list.
   - `algorithm._parameters` is a plain dict written before `initialize()` to simulate LEAN parameters.
 
@@ -136,6 +137,23 @@ def test_parameters_default_when_unset_and_stringify_when_set():
     assert algo.get_parameter("missing", 0.5) == 0.5
     algo._parameters = {"missing": "0.25"}
     assert float(algo.get_parameter("missing", 0.5)) == 0.25
+
+
+def test_run_algorithm_constructs_initialises_and_feeds():
+    from lean_stubs import run_algorithm
+
+    algo = run_algorithm(_Probe, [10.0, 20.0, 30.0, 40.0], warmup_bars=3)
+
+    assert len(algo.seen) == 1
+    assert [weight for _, _, weight in algo.orders] == [1.0]
+
+
+def test_run_algorithm_stringifies_parameters_like_lean_does():
+    from lean_stubs import run_algorithm
+
+    algo = run_algorithm(_Probe, [10.0], parameters={"depth": 3})
+
+    assert algo.get_parameter("depth", 0) == "3"
 ```
 
 - [ ] **Step 3: Run the test to verify it fails**
@@ -156,7 +174,7 @@ job and are verified by running LEAN itself (see README.md).
 
 import sys
 import types
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 class Resolution:
@@ -337,6 +355,30 @@ def feed(algorithm, bars, warmup_bars=0):
         algorithm.on_data(Slice({symbol: TradeBar(close)}))
 
 
+def run_algorithm(algorithm_class, prices, parameters=None, warmup_bars=0):
+    """Construct, configure, initialise and drive an algorithm in one call.
+
+    ``prices`` is a list of closes delivered as consecutive daily bars starting
+    2020-01-01. Parameters are stringified the way LEAN delivers them. Returns
+    the algorithm so tests can assert on ``.orders`` and portfolio state.
+
+    Tests needing specific calendar dates should build bars themselves and call
+    ``feed`` directly.
+    """
+    algorithm = algorithm_class()
+    algorithm._parameters = {
+        key: str(value) for key, value in (parameters or {}).items()
+    }
+    algorithm.initialize()
+    start = datetime(2020, 1, 1)
+    bars = [
+        (start + timedelta(days=index), float(price))
+        for index, price in enumerate(prices)
+    ]
+    feed(algorithm, bars, warmup_bars=warmup_bars)
+    return algorithm
+
+
 def install():
     """Register the fakes as the ``AlgorithmImports`` module."""
     module = types.ModuleType("AlgorithmImports")
@@ -376,7 +418,7 @@ lean_stubs.install()
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/test_lean_stubs.py -v`
-Expected: PASS, 4 tests
+Expected: PASS, 6 tests
 
 - [ ] **Step 7: Commit**
 
@@ -406,36 +448,24 @@ Create `tests/test_spy_buy_and_hold.py`:
 ```python
 from datetime import datetime
 
-from lean_stubs import feed
+from lean_stubs import run_algorithm
 from spy_buy_and_hold import SpyBuyAndHold
 
 
-def _bars(prices):
-    return [(datetime(2020, 1, d + 1), p) for d, p in enumerate(prices)]
-
-
-def _run(prices, parameters=None):
-    algo = SpyBuyAndHold()
-    algo._parameters = parameters or {}
-    algo.initialize()
-    feed(algo, _bars(prices))
-    return algo
-
-
 def test_buys_once_on_the_first_bar_and_never_again():
-    algo = _run([100.0, 120.0, 80.0, 140.0])
+    algo = run_algorithm(SpyBuyAndHold, [100.0, 120.0, 80.0, 140.0])
     assert [weight for _, _, weight in algo.orders] == [1.0]
     assert algo.orders[0][0] == datetime(2020, 1, 1)
 
 
 def test_allocation_drifts_freely_after_the_initial_buy():
-    algo = _run([100.0, 200.0])
+    algo = run_algorithm(SpyBuyAndHold, [100.0, 200.0])
     # 100% SPY doubled: no rebalance, so the whole portfolio rode the move.
     assert algo.portfolio.total_portfolio_value == 20000.0
 
 
 def test_partial_weight_leaves_the_remainder_in_cash():
-    algo = _run([100.0, 100.0], {"spy_weight": "0.5"})
+    algo = run_algorithm(SpyBuyAndHold, [100.0, 100.0], {"spy_weight": 0.5})
     assert [weight for _, _, weight in algo.orders] == [0.5]
     assert algo.portfolio.cash == 5000.0
 
@@ -517,26 +547,12 @@ Source of truth: `Stock/sp500/strategies/rebalance_50_50.py`. The drift comparis
 Create `tests/test_spy_threshold_rebalance.py`:
 
 ```python
-from datetime import datetime
-
-from lean_stubs import feed
+from lean_stubs import run_algorithm
 from spy_threshold_rebalance import SpyThresholdRebalance
 
 
-def _bars(prices):
-    return [(datetime(2020, 1, d + 1), p) for d, p in enumerate(prices)]
-
-
-def _run(prices, parameters=None):
-    algo = SpyThresholdRebalance()
-    algo._parameters = parameters or {}
-    algo.initialize()
-    feed(algo, _bars(prices))
-    return algo
-
-
 def test_first_bar_establishes_the_target_allocation():
-    algo = _run([100.0])
+    algo = run_algorithm(SpyThresholdRebalance, [100.0])
     assert [weight for _, _, weight in algo.orders] == [0.5]
     assert algo.portfolio.cash == 5000.0
 
@@ -544,31 +560,35 @@ def test_first_bar_establishes_the_target_allocation():
 def test_small_drift_does_not_trigger_a_rebalance():
     # 5000 in SPY at 100 -> 50 shares. At 105 the SPY weight is
     # 5250 / 10250 = 51.2%, drift 1.2% < 5% band.
-    algo = _run([100.0, 105.0])
+    algo = run_algorithm(SpyThresholdRebalance, [100.0, 105.0])
     assert len(algo.orders) == 1
 
 
 def test_drift_beyond_the_band_rebalances_back_to_target():
     # At 150 the SPY weight is 7500 / 12500 = 60%, drift 10% >= 5% band.
-    algo = _run([100.0, 150.0])
+    algo = run_algorithm(SpyThresholdRebalance, [100.0, 150.0])
     assert [weight for _, _, weight in algo.orders] == [0.5, 0.5]
     assert algo.portfolio[algo.spy].holdings_value == 6250.0
 
 
 def test_drift_exactly_on_the_band_rebalances():
     # 5000 at 100 -> 50 shares. Solve 50p / (50p + 5000) = 0.55 -> p = 122.222...
-    algo = _run([100.0, 5000.0 * 0.55 / (50.0 * 0.45)])
+    algo = run_algorithm(
+        SpyThresholdRebalance, [100.0, 5000.0 * 0.55 / (50.0 * 0.45)]
+    )
     assert len(algo.orders) == 2
 
 
 def test_downside_drift_also_rebalances():
     # At 50 the SPY weight is 2500 / 7500 = 33.3%, drift 16.7% >= 5%.
-    algo = _run([100.0, 50.0])
+    algo = run_algorithm(SpyThresholdRebalance, [100.0, 50.0])
     assert len(algo.orders) == 2
 
 
 def test_target_and_threshold_are_configurable():
-    algo = _run([100.0], {"target": "0.8", "threshold": "0.2"})
+    algo = run_algorithm(
+        SpyThresholdRebalance, [100.0], {"target": 0.8, "threshold": 0.2}
+    )
     assert [weight for _, _, weight in algo.orders] == [0.8]
     assert algo.threshold == 0.2
 ```
@@ -801,48 +821,50 @@ Source of truth: `MovingAverageEntryExit` in `Stock/sp500/strategies/moving_aver
 Create `tests/test_spy_ma_entry_exit.py`:
 
 ```python
-from datetime import datetime, timedelta
-
-from lean_stubs import feed
+from lean_stubs import run_algorithm
 from spy_ma_entry_exit import SpyMaEntryExit
 
-
-def _run(prices, parameters=None, warmup_bars=0):
-    algo = SpyMaEntryExit()
-    algo._parameters = parameters or {"ma_period": "3"}
-    algo.initialize()
-    bars = [
-        (datetime(2020, 1, 1) + timedelta(days=i), p) for i, p in enumerate(prices)
-    ]
-    feed(algo, bars, warmup_bars=warmup_bars)
-    return algo
+SHORT_MA = {"ma_period": 3}
 
 
 def test_enters_when_price_closes_above_the_moving_average():
     # 3-period SMA. Bars 1-3 are warm-up. Bar 4 close 40 > SMA(20,30,40)=30.
-    algo = _run([10.0, 20.0, 30.0, 40.0], warmup_bars=3)
+    algo = run_algorithm(
+        SpyMaEntryExit, [10.0, 20.0, 30.0, 40.0], SHORT_MA, warmup_bars=3
+    )
     assert [weight for _, _, weight in algo.orders] == [1.0]
 
 
 def test_stays_flat_when_the_first_signal_is_bearish():
     # Bar 4 close 5 < SMA(30,20,5) = 18.33, and the algorithm starts flat.
-    algo = _run([40.0, 30.0, 20.0, 5.0], warmup_bars=3)
+    algo = run_algorithm(
+        SpyMaEntryExit, [40.0, 30.0, 20.0, 5.0], SHORT_MA, warmup_bars=3
+    )
     assert algo.orders == []
 
 
 def test_exits_when_price_falls_back_below_the_moving_average():
-    algo = _run([10.0, 20.0, 30.0, 40.0, 1.0], warmup_bars=3)
+    algo = run_algorithm(
+        SpyMaEntryExit, [10.0, 20.0, 30.0, 40.0, 1.0], SHORT_MA, warmup_bars=3
+    )
     assert [weight for _, _, weight in algo.orders] == [1.0, 0.0]
 
 
 def test_does_not_retrade_while_the_signal_is_unchanged():
-    algo = _run([10.0, 20.0, 30.0, 40.0, 50.0, 60.0], warmup_bars=3)
+    algo = run_algorithm(
+        SpyMaEntryExit,
+        [10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+        SHORT_MA,
+        warmup_bars=3,
+    )
     assert [weight for _, _, weight in algo.orders] == [1.0]
 
 
 def test_price_equal_to_the_average_counts_as_in_market():
     # Constant prices make close == SMA exactly; the comparison is >=.
-    algo = _run([10.0, 10.0, 10.0, 10.0], warmup_bars=3)
+    algo = run_algorithm(
+        SpyMaEntryExit, [10.0, 10.0, 10.0, 10.0], SHORT_MA, warmup_bars=3
+    )
     assert [weight for _, _, weight in algo.orders] == [1.0]
 
 
@@ -932,47 +954,41 @@ Source of truth: `MovingAverageTrend` in `Stock/sp500/strategies/moving_average.
 Create `tests/test_spy_ma_trend.py`:
 
 ```python
-from datetime import datetime, timedelta
-
-from lean_stubs import feed
+from lean_stubs import run_algorithm
 from spy_ma_trend import SpyMaTrend
 
-
-def _run(prices, parameters=None, warmup_bars=0):
-    algo = SpyMaTrend()
-    algo._parameters = parameters or {"ma_period": "3"}
-    algo.initialize()
-    bars = [
-        (datetime(2020, 1, 1) + timedelta(days=i), p) for i, p in enumerate(prices)
-    ]
-    feed(algo, bars, warmup_bars=warmup_bars)
-    return algo
+SHORT_MA = {"ma_period": 3}
 
 
 def test_first_post_warmup_bar_establishes_the_above_weight():
-    algo = _run([10.0, 20.0, 30.0, 40.0], warmup_bars=3)
+    algo = run_algorithm(SpyMaTrend, [10.0, 20.0, 30.0, 40.0], SHORT_MA, warmup_bars=3)
     assert [weight for _, _, weight in algo.orders] == [0.6]
 
 
 def test_first_post_warmup_bar_establishes_the_below_weight():
-    algo = _run([40.0, 30.0, 20.0, 5.0], warmup_bars=3)
+    algo = run_algorithm(SpyMaTrend, [40.0, 30.0, 20.0, 5.0], SHORT_MA, warmup_bars=3)
     assert [weight for _, _, weight in algo.orders] == [0.4]
 
 
 def test_flipping_below_the_average_switches_to_the_below_weight():
-    algo = _run([10.0, 20.0, 30.0, 40.0, 1.0], warmup_bars=3)
+    algo = run_algorithm(
+        SpyMaTrend, [10.0, 20.0, 30.0, 40.0, 1.0], SHORT_MA, warmup_bars=3
+    )
     assert [weight for _, _, weight in algo.orders] == [0.6, 0.4]
 
 
 def test_no_trade_while_the_regime_is_unchanged():
-    algo = _run([10.0, 20.0, 30.0, 40.0, 50.0, 60.0], warmup_bars=3)
+    algo = run_algorithm(
+        SpyMaTrend, [10.0, 20.0, 30.0, 40.0, 50.0, 60.0], SHORT_MA, warmup_bars=3
+    )
     assert [weight for _, _, weight in algo.orders] == [0.6]
 
 
 def test_weights_are_configurable():
-    algo = _run(
+    algo = run_algorithm(
+        SpyMaTrend,
         [10.0, 20.0, 30.0, 40.0],
-        {"ma_period": "3", "above_weight": "0.9", "below_weight": "0.1"},
+        {"ma_period": 3, "above_weight": 0.9, "below_weight": 0.1},
         warmup_bars=3,
     )
     assert [weight for _, _, weight in algo.orders] == [0.9]
@@ -1075,39 +1091,34 @@ Create `tests/test_spy_vol_adjusted.py`:
 
 ```python
 import math
-from datetime import datetime, timedelta
 
-from lean_stubs import feed
+from lean_stubs import run_algorithm
 from spy_vol_adjusted import SpyVolAdjusted
 
-
-def _run(prices, parameters=None, warmup_bars=0):
-    algo = SpyVolAdjusted()
-    algo._parameters = parameters or {"lookback": "2"}
-    algo.initialize()
-    bars = [
-        (datetime(2020, 1, 1) + timedelta(days=i), p) for i, p in enumerate(prices)
-    ]
-    feed(algo, bars, warmup_bars=warmup_bars)
-    return algo
+SHORT_LOOKBACK = {"lookback": 2}
 
 
 def test_no_trade_before_the_return_window_is_full():
     # lookback 2 needs 3 prices; only 2 supplied.
-    algo = _run([100.0, 110.0])
+    algo = run_algorithm(SpyVolAdjusted, [100.0, 110.0], SHORT_LOOKBACK)
     assert algo.orders == []
 
 
 def test_window_fills_during_warm_up_so_the_first_live_bar_trades():
     # 3 warm-up bars fill the 2-return window; bar 4 trades immediately.
-    algo = _run([100.0, 110.0, 121.0, 133.1], warmup_bars=3)
+    algo = run_algorithm(
+        SpyVolAdjusted, [100.0, 110.0, 121.0, 133.1], SHORT_LOOKBACK, warmup_bars=3
+    )
     assert len(algo.orders) == 1
 
 
 def test_weight_is_target_vol_over_realised_vol():
-    # Returns +10% then -10%/1.1... build an explicit series and recompute.
-    prices = [100.0, 110.0, 99.0]
-    algo = _run(prices, {"lookback": "2", "min_weight": "0.0", "max_weight": "10.0"})
+    # Returns +10% then -10%; build an explicit series and recompute.
+    algo = run_algorithm(
+        SpyVolAdjusted,
+        [100.0, 110.0, 99.0],
+        {"lookback": 2, "min_weight": 0.0, "max_weight": 10.0},
+    )
 
     returns = [110.0 / 100.0 - 1.0, 99.0 / 110.0 - 1.0]
     mean = sum(returns) / 2
@@ -1119,24 +1130,28 @@ def test_weight_is_target_vol_over_realised_vol():
 
 
 def test_weight_is_clamped_to_the_maximum_in_calm_markets():
-    # Constant prices after the first move -> near-zero vol -> huge raw weight.
-    algo = _run([100.0, 101.0, 102.01, 103.0301])
+    # A steady 1% compounding drift gives near-zero vol -> huge raw weight.
+    algo = run_algorithm(
+        SpyVolAdjusted, [100.0, 101.0, 102.01, 103.0301], SHORT_LOOKBACK
+    )
     assert algo.orders[-1][2] == 0.90
 
 
 def test_weight_is_clamped_to_the_minimum_in_violent_markets():
-    algo = _run([100.0, 200.0, 50.0])
+    algo = run_algorithm(SpyVolAdjusted, [100.0, 200.0, 50.0], SHORT_LOOKBACK)
     assert algo.orders[-1][2] == 0.10
 
 
 def test_zero_volatility_places_no_order():
     # Flat prices give zero returns, zero variance, zero volatility.
-    algo = _run([100.0, 100.0, 100.0])
+    algo = run_algorithm(SpyVolAdjusted, [100.0, 100.0, 100.0], SHORT_LOOKBACK)
     assert algo.orders == []
 
 
 def test_it_rebalances_on_every_bar_once_ready():
-    algo = _run([100.0, 110.0, 99.0, 105.0, 100.0])
+    algo = run_algorithm(
+        SpyVolAdjusted, [100.0, 110.0, 99.0, 105.0, 100.0], SHORT_LOOKBACK
+    )
     assert len(algo.orders) == 3
 
 
@@ -1262,23 +1277,12 @@ Source of truth: `Stock/sp500/strategies/momentum.py`. Keeps the original's "one
 Create `tests/test_spy_momentum.py`:
 
 ```python
-from datetime import datetime, timedelta
-
-from lean_stubs import feed
+from lean_stubs import run_algorithm
 from spy_momentum import SpyMomentum
 
-
-def _run(bars, parameters=None, warmup_bars=0):
-    algo = SpyMomentum()
-    # lookback_months 1 -> required_days 21
-    algo._parameters = parameters or {"lookback_months": "1"}
-    algo.initialize()
-    feed(algo, bars, warmup_bars=warmup_bars)
-    return algo
-
-
-def _daily(prices, start=datetime(2020, 1, 1)):
-    return [(start + timedelta(days=i), p) for i, p in enumerate(prices)]
+# lookback_months 1 -> required_days 21, so bars start 2020-01-01 and the
+# 21st bar (2020-01-21) is the first one that can trade.
+ONE_MONTH = {"lookback_months": 1}
 
 
 def test_required_days_uses_21_trading_days_per_month():
@@ -1289,40 +1293,41 @@ def test_required_days_uses_21_trading_days_per_month():
 
 
 def test_no_trade_before_the_window_is_full():
-    algo = _run(_daily([100.0] * 20))
+    algo = run_algorithm(SpyMomentum, [100.0] * 20, ONE_MONTH)
     assert algo.orders == []
 
 
 def test_enters_when_price_is_above_the_lookback_price():
-    prices = [100.0] * 20 + [150.0]
-    algo = _run(_daily(prices))
+    algo = run_algorithm(SpyMomentum, [100.0] * 20 + [150.0], ONE_MONTH)
     assert [weight for _, _, weight in algo.orders] == [1.0]
 
 
 def test_stays_flat_when_momentum_is_negative_on_the_first_check():
-    prices = [100.0] * 20 + [50.0]
-    algo = _run(_daily(prices))
+    algo = run_algorithm(SpyMomentum, [100.0] * 20 + [50.0], ONE_MONTH)
     assert algo.orders == []
 
 
 def test_signal_is_only_re_evaluated_once_per_calendar_month():
     # 21 bars in January fill the window; the 21st is the first check.
     # Remaining January bars must not re-check even as prices swing.
-    prices = [100.0] * 20 + [150.0, 10.0, 10.0]
-    algo = _run(_daily(prices))
+    algo = run_algorithm(
+        SpyMomentum, [100.0] * 20 + [150.0, 10.0, 10.0], ONE_MONTH
+    )
     assert [weight for _, _, weight in algo.orders] == [1.0]
 
 
 def test_a_new_month_re_evaluates_and_can_exit():
     # 31 January bars then February: the February bar re-checks and exits.
-    prices = [100.0] * 20 + [150.0] + [150.0] * 10 + [1.0]
-    algo = _run(_daily(prices))
+    algo = run_algorithm(
+        SpyMomentum, [100.0] * 20 + [150.0] * 11 + [1.0], ONE_MONTH
+    )
     assert [weight for _, _, weight in algo.orders] == [1.0, 0.0]
 
 
 def test_window_fills_during_warm_up():
-    prices = [100.0] * 20 + [150.0]
-    algo = _run(_daily(prices), warmup_bars=20)
+    algo = run_algorithm(
+        SpyMomentum, [100.0] * 20 + [150.0], ONE_MONTH, warmup_bars=20
+    )
     assert [weight for _, _, weight in algo.orders] == [1.0]
 
 
@@ -1829,5 +1834,7 @@ git commit -m "feat: add variant registry, local runner and README"
 **Spec coverage.** Every section of the spec maps to a task: project structure and environment → Task 1 and Task 9; the common skeleton → Tasks 2-8 (each repeats it in full); the seven per-algorithm specifications → Tasks 2-8 one each; `variants.py` and `run_local.py` → Task 9; verification → Task 9's README and the `spy_ma_entry_exit` anchor. The three accepted semantic differences are carried into the code: warm-up via `set_warm_up` in Tasks 5-8, faithful daily rebalancing in Task 7 with the fee cost documented in the docstring, and the `ddof=1` sample deviation in Task 7 (written with `math` instead of `numpy` — deviation recorded under Global Constraints).
 
 **Placeholder scan.** No TBD/TODO markers, no "add error handling", no "similar to Task N" — each task repeats its code in full.
+
+**Test helper sharing.** `run_algorithm` lives in `tests/lean_stubs.py` (Task 1) and is the single entry point used by the tests in Tasks 2, 3, 5, 6, 7 and 8. Task 4 builds bars by hand and calls `feed` directly because its assertions depend on specific calendar months, which consecutive-day bars cannot express.
 
 **Type consistency.** `algorithm.orders` is a list of `(datetime, symbol, weight)` throughout Tasks 1-9. `RollingWindow` exposes `add`, `count`, `is_ready` and `__getitem__` in the fake (Task 1) and only those members are used in Tasks 7-8. The SMA indicator exposes `is_ready` and `current.value` in the fake and only those are used in Tasks 5-6. `ALGORITHM_CLASSES` keys are module names matching the seven filenames created in Tasks 2-8, and `slug` is defined in `variants.py` and consumed by `run_local.py`.
