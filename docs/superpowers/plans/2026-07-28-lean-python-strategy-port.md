@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Python 3.11 (`requires-python = ">=3.11,<3.12"`).
+- Python 3.11 (`requires-python = ">=3.11,<3.12"`). Provisioned by uv as a standalone x64 CPython 3.11.11 at `C:\Users\user\AppData\Roaming\uv\python\cpython-3.11.11-windows-x86_64-none\`, whose `python311.dll` is what pythonnet loads.
 - Runtime dependencies pinned to LEAN's requirements: `pandas==2.2.3`, `wrapt==1.16.0`. Source: `Stock/Lean/Algorithm.Python/readme.md`.
 - Dev dependencies: `pytest`, `quantconnect-stubs`.
 - Files in `algorithms/` may import **only** `from AlgorithmImports import *` and Python stdlib modules. No numpy, no pandas, no cross-file imports — they must paste into QC as a single file.
@@ -1621,6 +1621,25 @@ def strip_json_comments(text):
     return "".join(out)
 
 
+def python_dll():
+    """Locate the CPython DLL that pythonnet must load.
+
+    Under ``uv run`` inside this project's virtualenv, sys.base_prefix points
+    at the standalone x64 CPython 3.11 uv installed, and python311.dll sits in
+    that directory. LEAN_PYTHON_DLL overrides for unusual installs.
+    """
+    override = os.environ.get("LEAN_PYTHON_DLL")
+    if override:
+        return override
+    candidate = Path(sys.base_prefix) / "python311.dll"
+    if not candidate.exists():
+        raise RuntimeError(
+            f"python311.dll not found at {candidate}. "
+            f"Install it with 'uv python install 3.11.11' or set LEAN_PYTHON_DLL."
+        )
+    return str(candidate)
+
+
 def build_config(module_name, parameters, results_dir):
     config = json.loads(strip_json_comments(BASE_CONFIG.read_text(encoding="utf-8")))
     config["environment"] = "backtesting"
@@ -1630,6 +1649,8 @@ def build_config(module_name, parameters, results_dir):
     config["data-folder"] = f"{LEAN_ROOT / 'Data'}/"
     config["results-destination-folder"] = str(results_dir)
     config["close-automatically"] = True
+    # Lets LEAN resolve pandas/wrapt from this project's virtualenv.
+    config["python-venv"] = str(REPO_ROOT / ".venv")
     config["parameters"] = {key: str(value) for key, value in parameters.items()}
     return config
 
@@ -1647,11 +1668,14 @@ def run_variant(name):
         json.dump(config, stream, indent=2)
 
     dotnet = os.environ.get("LEAN_DOTNET", "dotnet")
+    env = dict(os.environ)
+    env["PYTHONNET_PYDLL"] = python_dll()
     try:
         subprocess.run(
             [dotnet, str(LAUNCHER_DLL), "--config", config_path],
             cwd=str(LAUNCHER_DIR),
             stdin=subprocess.DEVNULL,
+            env=env,
             check=True,
         )
     finally:
@@ -1734,15 +1758,17 @@ parameter has a default. Copy one into a QuantConnect project and it runs.
 
 ## Running locally
 
-Prerequisites, from `../Lean/Algorithm.Python/readme.md`:
+Prerequisites:
 
-1. A **x64** .NET 10 SDK. An x86 SDK cannot load a 64-bit Python and will fail.
-2. **Python 3.11.11 x64**.
-3. The `PYTHONNET_PYDLL` environment variable pointing at that install's
-   `python311.dll`.
-4. A built LEAN Launcher: `dotnet build ../Lean/Launcher/QuantConnect.Lean.Launcher.csproj`
+1. A **x64** .NET 10 SDK. An x86 SDK cannot load a 64-bit Python and will fail
+   at startup.
+2. Python 3.11.11 x64 — `uv python install 3.11.11` provides one.
+3. A built LEAN Launcher: `dotnet build ../Lean/Launcher/QuantConnect.Lean.Launcher.csproj`
 
-Then:
+`PYTHONNET_PYDLL` does not need to be set system-wide. `run_local.py` derives
+it from `sys.base_prefix` and passes it to the engine for that run only, and
+points LEAN's `python-venv` setting at this project's `.venv` so pandas and
+wrapt resolve.
 
 ```
 uv sync
@@ -1752,7 +1778,8 @@ uv run run_local.py --all
 ```
 
 Results land in `results/<slug>/` and a comparison table is printed. Set
-`LEAN_DOTNET` if the x64 `dotnet` is not the one on `PATH`.
+`LEAN_DOTNET` if the x64 `dotnet` is not first on `PATH`, or `LEAN_PYTHON_DLL`
+if `python311.dll` lives somewhere unusual.
 
 ## Verifying the port
 
