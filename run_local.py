@@ -23,6 +23,7 @@ BASE_CONFIG = LEAN_ROOT / "Launcher" / "config.json"
 LAUNCHER_DIR = LEAN_ROOT / "Launcher" / "bin" / "Debug"
 LAUNCHER_DLL = LAUNCHER_DIR / "QuantConnect.Lean.Launcher.dll"
 RESULTS_ROOT = REPO_ROOT / "results"
+DEFAULT_DATA_FOLDER = LEAN_ROOT / "Data"
 
 REPORTED = [
     "Start Equity",
@@ -85,13 +86,16 @@ def python_dll():
     return str(candidate)
 
 
-def build_config(module_name, parameters, results_dir):
+def build_config(module_name, parameters, results_dir, data_folder=None):
     config = json.loads(strip_json_comments(BASE_CONFIG.read_text(encoding="utf-8")))
     config["environment"] = "backtesting"
     config["algorithm-language"] = "Python"
     config["algorithm-type-name"] = ALGORITHM_CLASSES[module_name]
     config["algorithm-location"] = str(REPO_ROOT / "algorithms" / f"{module_name}.py")
-    config["data-folder"] = f"{LEAN_ROOT / 'Data'}/"
+    # Absolute: the launcher runs with cwd=Lean/Launcher/bin/Debug, so a
+    # relative --data-folder would resolve against that instead of here.
+    folder = Path(data_folder).resolve() if data_folder else DEFAULT_DATA_FOLDER
+    config["data-folder"] = f"{folder}/"
     config["results-destination-folder"] = str(results_dir)
     config["close-automatically"] = True
     # Lets LEAN resolve pandas/wrapt from this project's virtualenv.
@@ -100,14 +104,16 @@ def build_config(module_name, parameters, results_dir):
     return config
 
 
-def run_variant(name):
+def run_variant(name, data_folder=None, label=None):
+    """Run one variant. `data_folder` overrides LEAN's bundled data, and
+    `label` keeps the results of two datasets side by side."""
     module_name, parameters = VARIANTS[name]
-    results_dir = RESULTS_ROOT / slug(name)
+    results_dir = RESULTS_ROOT / (slug(name) if label is None else f"{slug(name)}__{label}")
     results_dir.mkdir(parents=True, exist_ok=True)
     for stale in results_dir.glob("*-summary.json"):
         stale.unlink()
 
-    config = build_config(module_name, parameters, results_dir)
+    config = build_config(module_name, parameters, results_dir, data_folder)
     handle, config_path = tempfile.mkstemp(suffix=".json", text=True)
     with os.fdopen(handle, "w", encoding="utf-8") as stream:
         json.dump(config, stream, indent=2)
@@ -137,6 +143,11 @@ def main():
     parser.add_argument("variant", nargs="?", help="variant name to run")
     parser.add_argument("--all", action="store_true", help="run every variant")
     parser.add_argument("--list", action="store_true", help="list variant names")
+    parser.add_argument(
+        "--data-folder",
+        help="override LEAN's data-folder, e.g. a folder built by convert_data.py",
+    )
+    parser.add_argument("--label", help="suffix for results/<slug>__<label>/")
     args = parser.parse_args()
 
     if args.list:
@@ -159,10 +170,25 @@ def main():
         print(f"LEAN Launcher not built at {LAUNCHER_DLL}", file=sys.stderr)
         return 1
 
+    if args.data_folder:
+        # A data folder missing market-hours or symbol-properties fails deep
+        # into LEAN's startup with an unhelpful stack trace; catch it here.
+        from leandata.lean.overlay import missing_reference_data
+
+        missing = missing_reference_data(args.data_folder)
+        if missing:
+            print(
+                f"{args.data_folder} is missing reference data: "
+                f"{', '.join(str(path) for path in missing)}. "
+                f"Run 'uv run convert_data.py convert ...' or copy it from {DEFAULT_DATA_FOLDER}.",
+                file=sys.stderr,
+            )
+            return 1
+
     results = {}
     for name in names:
         print(f"\n=== {name} ===", flush=True)
-        results[name] = run_variant(name)
+        results[name] = run_variant(name, data_folder=args.data_folder, label=args.label)
 
     width = max(len(name) for name in results)
     print(f"\n{'Variant'.ljust(width)}  " + "  ".join(REPORTED))
