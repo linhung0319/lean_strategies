@@ -1,7 +1,11 @@
-"""The 16 named strategy variants from sp500/main.py:14-37.
+"""Named strategy variants for run_local.py.
 
-Local tooling for run_local.py. Never uploaded to QuantConnect — the files in
-algorithms/ are self-contained and carry their own defaults.
+The first 16 are the ports of sp500/main.py:14-37 and run against LEAN's
+bundled SPY. The rest run against symbols produced by convert_data.py, so
+they need `--data-folder data`.
+
+Local tooling only. Never uploaded to QuantConnect — the files in algorithms/
+are self-contained and carry their own defaults.
 """
 
 import re
@@ -14,6 +18,8 @@ ALGORITHM_CLASSES = {
     "spy_ma_entry_exit": "SpyMaEntryExit",
     "spy_vol_adjusted": "SpyVolAdjusted",
     "spy_momentum": "SpyMomentum",
+    "stock_buy_and_hold": "StockBuyAndHold",
+    "stock_ma_entry_exit": "StockMaEntryExit",
 }
 
 VARIANTS = {
@@ -46,6 +52,20 @@ VARIANTS = {
     "200-day MA Entry/Exit": ("spy_ma_entry_exit", {"ma_period": 200}),
     "12-Month Momentum": ("spy_momentum", {"lookback_months": 12}),
 }
+
+# Converted data. These need a data folder built by convert_data.py:
+#   uv run --group data convert_data.py convert --source yfinance --ticker NVDA \
+#       --exchange-code Q --start 2015-01-02 --end 2026-08-07
+#   uv run run_local.py "NVDA 200-day MA Entry/Exit" --data-folder data
+NVDA_WINDOW = {"ticker": "NVDA", "start_date": "2015-01-02", "end_date": "2026-08-07"}
+
+VARIANTS.update(
+    {
+        "NVDA Buy & Hold": ("stock_buy_and_hold", {**NVDA_WINDOW, "weight": 1.0}),
+        "NVDA 200-day MA Entry/Exit": ("stock_ma_entry_exit", {**NVDA_WINDOW, "ma_period": 200}),
+        "NVDA 50-day MA Entry/Exit": ("stock_ma_entry_exit", {**NVDA_WINDOW, "ma_period": 50}),
+    }
+)
 
 
 def slug(name):

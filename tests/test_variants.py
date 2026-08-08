@@ -1,10 +1,15 @@
 import importlib
+from datetime import datetime
 
 from variants import ALGORITHM_CLASSES, VARIANTS, slug
 
 
 def test_all_sixteen_variants_from_main_py_are_present():
-    assert len(VARIANTS) == 16
+    # Counted by module prefix rather than by len(VARIANTS): the registry also
+    # carries variants that run against converted data, and adding one of
+    # those must not look like losing one of these.
+    spy_variants = [name for name, (module, _) in VARIANTS.items() if module.startswith("spy_")]
+    assert len(spy_variants) == 16
 
 
 def test_every_variant_points_at_a_known_algorithm_module():
@@ -19,10 +24,11 @@ def test_every_algorithm_module_imports_and_defines_its_class():
 
 
 # How each algorithm coerces the raw (stringified) parameter value, keyed by
-# parameter name — mirrors the `int(...)`, `float(...)` and
-# `str(...).upper()` calls in algorithms/*.py's initialize().
+# parameter name — mirrors the `int(...)`, `float(...)`, `str(...).upper()`
+# and date-splitting calls in algorithms/*.py's initialize().
 INT_PARAMETERS = {"ma_period", "lookback", "lookback_months"}
-UPPERCASE_STRING_PARAMETERS = {"frequency"}
+UPPERCASE_STRING_PARAMETERS = {"frequency", "ticker"}
+DATE_PARAMETERS = {"start_date", "end_date"}
 
 
 def _coerce(key, value):
@@ -30,6 +36,8 @@ def _coerce(key, value):
         return str(value).upper()
     if key in INT_PARAMETERS:
         return int(value)
+    if key in DATE_PARAMETERS:
+        return datetime.strptime(str(value), "%Y-%m-%d")
     return float(value)
 
 

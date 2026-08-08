@@ -170,14 +170,18 @@ class QCAlgorithm:
         holding.holdings_value = holding.quantity * price
 
 
-def feed(algorithm, bars, warmup_bars=0):
-    """Push ``(datetime, close)`` pairs through the algorithm as SPY bars.
+def feed(algorithm, bars, warmup_bars=0, ticker="SPY"):
+    """Push ``(datetime, close)`` pairs through the algorithm as one symbol's bars.
 
     The first ``warmup_bars`` are delivered with ``is_warming_up`` set, which
     is how LEAN behaves: ``on_data`` is still called and framework indicators
     still update, but the algorithm is expected to skip trading.
+
+    ``ticker`` matters for the algorithms that take it as a parameter: they
+    look up ``data.bars`` by their own symbol, so feeding SPY bars to an
+    algorithm configured for NVDA would deliver nothing.
     """
-    symbol = Symbol("SPY")
+    symbol = Symbol(ticker)
     for index, (when, close) in enumerate(bars):
         close = float(close)
         algorithm.time = when
@@ -189,7 +193,7 @@ def feed(algorithm, bars, warmup_bars=0):
         algorithm.on_data(Slice({symbol: TradeBar(close)}))
 
 
-def run_algorithm(algorithm_class, prices, parameters=None, warmup_bars=0):
+def run_algorithm(algorithm_class, prices, parameters=None, warmup_bars=0, ticker=None):
     """Construct, configure, initialise and drive an algorithm in one call.
 
     ``prices`` is a list of closes delivered as consecutive daily bars starting
@@ -209,8 +213,17 @@ def run_algorithm(algorithm_class, prices, parameters=None, warmup_bars=0):
         (start + timedelta(days=index), float(price))
         for index, price in enumerate(prices)
     ]
-    feed(algorithm, bars, warmup_bars=warmup_bars)
+    # Default to whatever the algorithm subscribed to, so ticker-parameterised
+    # algorithms work without every test having to pass it.
+    feed(algorithm, bars, warmup_bars=warmup_bars, ticker=ticker or _subscribed_ticker(algorithm))
     return algorithm
+
+
+def _subscribed_ticker(algorithm):
+    for attribute in vars(algorithm).values():
+        if isinstance(attribute, Symbol):
+            return str(attribute)
+    return "SPY"
 
 
 def install():
