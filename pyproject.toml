@@ -13,6 +13,17 @@ dev = [
     "pytest>=8.0",
     "quantconnect-stubs",
 ]
+# Not installed by default: run_local.py points LEAN's python-venv at this
+# same .venv, so every package here also lands on the embedded interpreter's
+# path. Only install it when you are actually converting data.
+data = [
+    "yfinance>=0.2.65",
+]
+
+[tool.uv]
+default-groups = ["dev"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["network: hits Yahoo Finance; deselected by default"]
+addopts = "-m 'not network'"
