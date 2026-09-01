@@ -180,9 +180,10 @@ class ValueSeries:
 
 Validation: `DatetimeIndex`, tz-naive, strictly increasing, unique, all finite.
 
-**It must not require positive values.** `T10Y3M` is a yield spread that goes
-negative, and `DFF` sat between 0.04 and 0.09 through 2021 and can print 0.
-Reusing `_validate_events`, which demands `> 0`, would reject real data.
+**It must not require positive values.** Measured over the fetch window,
+`T10Y3M` ranges from -1.89 to 2.27, is negative on 738 rows and exactly 0 on
+11. Reusing `_validate_events`, which demands `> 0`, would reject real data on
+its first run.
 
 ## `sources/bitfinex.py`
 
@@ -196,12 +197,18 @@ The response row order is:
 [MTS, OPEN, CLOSE, HIGH, LOW, VOLUME]
 ```
 
-**Close is third, before high and low.** This is the single most likely bug in
-the whole change, and `SecurityHistory` validation would not catch a
-close/high swap in every case, because a swapped pair can still satisfy
-`high >= max(open, close)` on a day the two are near each other.
-`test_bitfinex_source.py` asserts the mapping explicitly against a fixed fake
-response.
+**Close is third, before high and low.** This was confirmed empirically, not
+read off the docs: over 3889 real rows, reading the columns as
+`[MTS, O, C, H, L, V]` satisfies LEAN's OHLC invariants on every row, while
+reading them as `[MTS, O, H, L, C, V]` violates them on 3879. Validation would
+not have caught this on its own — a swapped pair still satisfies
+`high >= max(open, close)` on a day the two are near each other, which is why
+`test_bitfinex_source.py` asserts the field mapping explicitly against a fixed
+fake response rather than relying on the model's checks.
+
+One request with `limit=10000` covers the whole fetch window (3889 rows,
+2016-01-01 to 2026-08-31, already ascending under `sort=1`), so paging exists
+only as a guard, not as a routine code path.
 
 Timestamps are UTC midnight, converted to tz-naive UTC rather than to New York.
 Dividends and splits stay empty.
@@ -210,10 +217,18 @@ Dividends and splits stay empty.
 
 `GET https://fred.stlouisfed.org/graph/fredgraph.csv?id=<SERIES>&cosd=<start>&coed=<end>`
 
-Two columns, `observation_date` and the series id. FRED writes `.` for a
-missing observation on a holiday or non-publication day; those rows are
-dropped rather than filled, because the algorithm's own `.dropna()` expects
-gaps and filling them would invent observations.
+Two columns, `observation_date` and the series id, LF terminated. A missing
+observation is written as an **empty field**, not as the `.` that FRED's older
+text format uses: `fredgraph.csv` emits `2016-01-18,` for a market holiday.
+Measured over 2016-01-01 to 2026-08-31: `VIXCLS` has 69 empty rows out of
+2780, `T10Y3M` has 115 out of 2781, `DFF` has none out of 3893 (it publishes
+on weekends too). Empty rows are dropped rather than filled, because the
+algorithm's own `.dropna()` expects gaps and filling them would invent
+observations.
+
+The same measurement confirms why `ValueSeries` must accept non-positive
+values rather than reuse `_validate_events`: `T10Y3M` ranges from -1.89 to
+2.27, is negative on 738 of those rows, and is exactly 0 on 11 of them.
 
 ## `algorithms/ai_stocks_bonds_rotation.py`
 
