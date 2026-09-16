@@ -1,7 +1,33 @@
 import importlib
+import importlib.util
 from datetime import datetime
+from pathlib import Path
 
 from variants import ALGORITHM_CLASSES, VARIANTS, slug
+
+ALGORITHMS = Path(__file__).resolve().parent.parent / "algorithms"
+
+# Third-party imports an algorithm module makes at import time. They sit in
+# the optional `topological` dependency group for the reason pyproject.toml
+# gives, so a default `uv sync` leaves them out -- skip the module rather than
+# fail, the way test_factor_cross_validation skips without a Lean clone.
+# Run `uv sync --group topological` to cover these too.
+OPTIONAL_IMPORTS = {"topological_portfolio": ("kmapper", "umap", "sklearn")}
+
+
+def _importable(module_name):
+    return all(
+        importlib.util.find_spec(name) is not None
+        for name in OPTIONAL_IMPORTS.get(module_name, ())
+    )
+
+
+def test_every_algorithm_module_is_at_least_syntactically_valid():
+    # Runs whether or not the optional stack is installed, so a typo in a
+    # skipped module is still caught offline.
+    for module_name in ALGORITHM_CLASSES:
+        source = (ALGORITHMS / f"{module_name}.py").read_text(encoding="utf-8")
+        compile(source, f"{module_name}.py", "exec")
 
 
 def test_all_sixteen_variants_from_main_py_are_present():
@@ -19,6 +45,8 @@ def test_every_variant_points_at_a_known_algorithm_module():
 
 def test_every_algorithm_module_imports_and_defines_its_class():
     for module_name, class_name in ALGORITHM_CLASSES.items():
+        if not _importable(module_name):
+            continue
         module = importlib.import_module(module_name)
         assert hasattr(module, class_name), f"{module_name}.{class_name}"
 
@@ -26,7 +54,14 @@ def test_every_algorithm_module_imports_and_defines_its_class():
 # How each algorithm coerces the raw (stringified) parameter value, keyed by
 # parameter name — mirrors the `int(...)`, `float(...)`, `str(...).upper()`
 # and date-splitting calls in algorithms/*.py's initialize().
-INT_PARAMETERS = {"ma_period", "lookback", "lookback_months"}
+INT_PARAMETERS = {
+    "history_lookback",
+    "lookback",
+    "lookback_months",
+    "ma_period",
+    "recalibrate_period",
+    "universe_size",
+}
 UPPERCASE_STRING_PARAMETERS = {"frequency", "ticker"}
 DATE_PARAMETERS = {"start_date", "end_date"}
 
@@ -43,6 +78,8 @@ def _coerce(key, value):
 
 def test_every_variant_parameter_is_accepted_by_its_algorithm():
     for name, (module_name, parameters) in VARIANTS.items():
+        if not _importable(module_name):
+            continue
         module = importlib.import_module(module_name)
         algorithm = getattr(module, ALGORITHM_CLASSES[module_name])()
         algorithm._parameters = {k: str(v) for k, v in parameters.items()}

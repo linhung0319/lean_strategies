@@ -74,6 +74,18 @@ class YFinanceClient:
             repair=self.repair,
         )
 
+    def shares_outstanding(self, ticker: str, start: date | None, end: date | None) -> pd.Series:
+        """Reported shares outstanding, as-of dates. Empty when Yahoo has none.
+
+        Yahoo serves this from filings, so it is sparse -- a few points a year
+        -- and stops at the last report rather than at ``end``.
+        """
+        exclusive_end = end + timedelta(days=1) if end else None
+        series = self._yfinance.Ticker(ticker).get_shares_full(
+            start=start, end=exclusive_end
+        )
+        return pd.Series(dtype="float64") if series is None else series
+
 
 @dataclass
 class SanitizeReport:
@@ -167,6 +179,34 @@ class YFinanceSource(BaseSource):
             ),
         )
         return history.clip(request.start, request.end)
+
+    def fetch_shares_outstanding(self, request: FetchRequest) -> pd.Series:
+        """Shares outstanding for ``request.ticker``, RAW and as-of-date.
+
+        Raw in the same sense as the bars: the count as the company reported
+        it at the time, not restated for later splits. Pairing it with a raw
+        close is what makes the product a point-in-time market cap.
+
+        The series is sparse and may be empty -- Yahoo has no filings history
+        for some names, and none at all for most delisted ones. An empty
+        result is a fact about the vendor, not an error, so callers get an
+        empty Series and decide what a missing market cap means.
+        """
+        raw = self.client.shares_outstanding(request.ticker, request.start, request.end)
+        if raw is None or len(raw) == 0:
+            return pd.Series(dtype="float64", index=pd.DatetimeIndex([], name="time"))
+
+        series = pd.Series(
+            pd.to_numeric(raw.to_numpy(), errors="coerce"),
+            index=_naive_exchange_index(raw.index, Resolution.DAILY),
+            dtype="float64",
+        )
+        series = series[np.isfinite(series.to_numpy()) & (series.to_numpy() > 0)]
+        # Yahoo repeats the same filing on consecutive dates; the last value
+        # for a day is the current one.
+        series = series[~series.index.duplicated(keep="last")].sort_index()
+        series.index.name = "time"
+        return series
 
 
 def _flatten_columns(frame: pd.DataFrame) -> pd.DataFrame:

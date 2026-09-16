@@ -9,6 +9,9 @@ job and are verified by running LEAN itself (see README.md).
 import sys
 import types
 from datetime import datetime, timedelta
+from typing import Callable
+
+import numpy as np
 
 
 class Resolution:
@@ -19,6 +22,60 @@ class Resolution:
 
 class Symbol(str):
     """LEAN symbols behave as opaque keys; a str subclass is close enough."""
+
+
+class Universe:
+    """Marker type. Framework models annotate with it; nothing here uses it."""
+
+
+class ETFConstituentUniverse:
+    """One row of an ETF constituents universe file."""
+
+    def __init__(self, symbol, weight=None, shares_held=None, market_value=None):
+        self.symbol = symbol
+        self.weight = weight
+        self.shares_held = shares_held
+        self.market_value = market_value
+
+
+class PortfolioTarget:
+    def __init__(self, symbol, quantity):
+        self.symbol = symbol
+        self.quantity = quantity
+
+    def __eq__(self, other):
+        return (
+            isinstance(other, PortfolioTarget)
+            and self.symbol == other.symbol
+            and self.quantity == other.quantity
+        )
+
+    def __repr__(self):
+        return f"PortfolioTarget({self.symbol!r}, {self.quantity!r})"
+
+
+class _Recorder:
+    """Records every call instead of doing anything, and answers any attribute.
+
+    Scheduling, universe settings and date/time rules all reduce to "the
+    algorithm asked for this" as far as these tests are concerned -- what the
+    engine then does with it is the engine's to verify.
+    """
+
+    def __init__(self, name="recorder"):
+        self._name = name
+        self.calls = []
+
+    def __getattr__(self, attribute):
+        if attribute.startswith("_"):
+            raise AttributeError(attribute)
+        child = _Recorder(f"{self._name}.{attribute}")
+        object.__setattr__(self, attribute, child)
+        return child
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return self
 
 
 class TradeBar:
@@ -120,6 +177,13 @@ class QCAlgorithm:
         self.time = datetime(1970, 1, 1)
         self.is_warming_up = False
         self.orders = []
+        self.settings = types.SimpleNamespace()
+        self.schedule = _Recorder("schedule")
+        self.universe_settings = types.SimpleNamespace(resolution=None)
+        self.date_rules = _Recorder("date_rules")
+        self.time_rules = _Recorder("time_rules")
+        self.securities = {}
+        self.universe_selection_models = []
 
     # -- configuration -------------------------------------------------
     def set_start_date(self, year, month, day):
@@ -140,6 +204,11 @@ class QCAlgorithm:
     def set_benchmark(self, symbol):
         pass
 
+    def add_universe_selection(self, model):
+        # LEAN calls create_universes later, once the engine is running; a
+        # test that wanted that would have to stand up a universe too.
+        self.universe_selection_models.append(model)
+
     def set_warm_up(self, period, resolution=None):
         self.warm_up_period = period
 
@@ -155,7 +224,12 @@ class QCAlgorithm:
         pass
 
     # -- trading -------------------------------------------------------
-    def set_holdings(self, symbol, weight):
+    def set_holdings(self, symbol, weight=None, liquidate_existing_holdings=False):
+        if isinstance(symbol, list):
+            # The targets overload. Recorded whole: a basket order is one
+            # decision, and splitting it would lose which symbols were left out.
+            self.orders.append((self.time, list(symbol), liquidate_existing_holdings))
+            return
         self.orders.append((self.time, symbol, float(weight)))
         total = self.portfolio.total_portfolio_value
         target_value = total * float(weight)
@@ -230,14 +304,51 @@ def install():
     """Register the fakes as the ``AlgorithmImports`` module."""
     module = types.ModuleType("AlgorithmImports")
     exported = [
+        "Callable",
+        "ETFConstituentUniverse",
+        "PortfolioTarget",
         "QCAlgorithm",
         "Resolution",
         "RollingWindow",
         "Slice",
         "Symbol",
         "TradeBar",
+        "Universe",
+        "np",
+        "timedelta",
     ]
     for name in exported:
         setattr(module, name, globals()[name])
     module.__all__ = exported
     sys.modules["AlgorithmImports"] = module
+    _install_framework_models()
+
+
+def _install_framework_models():
+    """Stand in for the Selection/ package LEAN puts on the algorithm's path.
+
+    Only the base class matters here: an algorithm subclasses it, and the
+    engine is what gives it a universe to select from.
+    """
+    package = types.ModuleType("Selection")
+    package.__path__ = []
+    sys.modules["Selection"] = package
+
+    for name in ("UniverseSelectionModel", "ETFConstituentsUniverseSelectionModel"):
+        module = types.ModuleType(f"Selection.{name}")
+        setattr(module, name, globals()[name])
+        sys.modules[f"Selection.{name}"] = module
+        setattr(package, name, module)
+
+
+class UniverseSelectionModel:
+    def create_universes(self, algorithm):
+        raise NotImplementedError
+
+
+class ETFConstituentsUniverseSelectionModel(UniverseSelectionModel):
+    def __init__(self, etf_symbol, universe_settings=None, universe_filter_func=None):
+        self.etf_symbol = etf_symbol
+        self.universe_settings = universe_settings
+        self.universe_filter_function = universe_filter_func
+        self.universe = None

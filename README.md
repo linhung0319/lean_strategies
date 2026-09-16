@@ -6,6 +6,12 @@ Each file in `algorithms/` is self-contained: its only import is
 `from AlgorithmImports import *` (plus stdlib `math` where needed), and every
 parameter has a default. Copy one into a QuantConnect project and it runs.
 
+`topological_portfolio.py` is the exception on both counts. It imports
+kmapper, umap and scikit-learn, and it needs an ETF constituents universe
+that the free LEAN distribution does not ship — see
+[Constituents universes](#constituents-universes). It is still one file, so
+pasting it into a QuantConnect project still works.
+
 ## Using these on quantconnect.com
 
 1. Create a new Python algorithm project.
@@ -88,25 +94,34 @@ business carrying `curl_cffi`, `lxml` and `protobuf`.
 ### The pipeline
 
 ```
-  yfinance          csv           <your next source>
-      └───────────────┴───────────────┘
-                      │   sources/<name>.py        vendor format -> canonical
-                      ▼
-              SecurityHistory                      RAW OHLCV + dividends + splits,
-                      │                            naive exchange-local time
-                      │   lean/writer.py           canonical -> LEAN bytes
-                      ▼
-       data/equity/usa/{daily,factor_files,map_files}/<ticker>.*
-                      +
-       data/{market-hours,symbol-properties,alternative}/     mirrored from ../Lean/Data
-                      │   run_local.py --data-folder data
-                      ▼
-                LEAN backtest
+  yfinance       csv      <your next source>          sp500-github
+      └───────────┴───────────┘                             │
+                  │  sources/<name>.py                      │  sources/sp500_github.py
+                  ▼  vendor format -> canonical             ▼
+          SecurityHistory                            IndexMembership
+          RAW OHLCV + dividends + splits,            who was in the index,
+          naive exchange-local time                  and on which days
+                  │                                         │
+                  ├──────────────┬──────────────────────────┘
+                  │              │  weights.py
+                  │              ▼  prices x shares outstanding -> weights
+                  │      ConstituentPanel
+                  │              │
+    lean/writer.py│              │lean/universes.py + lean/identifiers.py
+                  ▼              ▼
+   data/equity/usa/{daily,factor_files,map_files}/<ticker>.*
+   data/equity/usa/universes/etf/<etf>/<yyyyMMdd>.csv
+                  +
+   data/{market-hours,symbol-properties,alternative}/   mirrored from ../Lean/Data
+                  │  run_local.py --data-folder data
+                  ▼
+            LEAN backtest
 ```
 
 Three layers, deliberately kept apart: `model.py` defines the canonical
-`SecurityHistory`, `sources/` turns a vendor download into one, `lean/` turns
-one into bytes. `lean/` never imports `sources/` and vice versa.
+types, `sources/` turns a vendor download into one of them, `lean/` turns one
+into bytes. `lean/` never imports `sources/` and vice versa, and `weights.py`
+sits between them knowing about neither.
 
 ### What a data folder must contain
 
@@ -199,6 +214,7 @@ so a longer hold suggests a missed change rather than a genuine one.
 
 ```
 convert    download a symbol and write it into a data folder
+universe   download a whole index and write an ETF constituents universe
 check      report what a data folder holds and whether it is complete
 verify     diff a generated symbol against another data folder, row by row
 snapshot   save a source's raw output as a replayable CSV pair
@@ -322,6 +338,155 @@ One harmless log line to expect: LEAN probes for
 converted folder has only daily bars. It falls back to daily and the run
 completes normally.
 
+## Constituents universes
+
+A strategy that selects from an index rather than naming its symbols needs
+more than bars. `algorithms/topological_portfolio.py` is the one here that
+does: it takes the 200 heaviest SPY constituents, clusters them by the shape
+of their return correlations, and holds the clusters. QuantConnect's own ETF
+constituents dataset is not part of the free LEAN distribution, so the whole
+thing — membership, weights, identifiers, and bars for every ticker that was
+ever a member — has to be built locally.
+
+```
+uv sync --group data --group topological
+
+uv run --group data convert_data.py universe --etf SPY \
+    --start 2020-01-02 --end 2026-09-15 --out data-sp500
+
+uv run --group topological run_local.py "Topological Portfolio" \
+    --data-folder data-sp500
+```
+
+The first command takes about ten minutes on a cold cache — 644 tickers, two
+requests each — and 44 seconds on a warm one, because every download is
+snapshotted under `data-sp500/.cache/` and replayed from there. That is what
+makes a build resumable when the vendor starts refusing requests two thirds
+of the way through, and what makes a rebuild months from now reproduce the
+same backtest instead of quietly picking up restated history.
+
+It lands in `data-sp500/` rather than `data/` on purpose: it re-downloads SPY
+over its own window, and `data/`'s copy is pinned to 2021-03-31 so [the
+dataset comparison](#comparing-a-converted-dataset-against-the-bundled-one)
+stays reproducible.
+
+### What the command produces
+
+```
+$ uv run --group data convert_data.py universe --etf SPY \
+      --start 2020-01-02 --end 2026-09-15 --out data-sp500
+index     2720 membership rows
+symbols   599 of 644 written  2020-01-02 -> 2026-09-15
+missing   45 with no vendor data: ABMD, AGN, ALXN, ANSS, ATVI, ...
+universe  1684 files  2020-01-02 -> 2026-09-15
+          848253 constituent rows, 40327 with no weight (4.75%)
+```
+
+Alongside the usual `daily/`, `factor_files/` and `map_files/` entries for
+all 599 symbols, it writes one file per trading day at
+`equity/usa/universes/etf/spy/<yyyyMMdd>.csv`, which is where
+`ETFConstituentUniverse.GetSource` looks
+(`Lean/Common/Data/UniverseSelection/ETFConstituentUniverse.cs:80`):
+
+```
+AAPL,AAPL XAUQQ1QHPEUD,20260915,0.06605201,,
+```
+
+Ticker, security identifier, last-update date, weight, shares held, market
+value. The last two are empty because nothing free publishes them; LEAN reads
+an empty field back as null, which is the honest answer.
+
+**A file per trading day, not per change.** `Time` is the file's date and
+`EndTime` is a day later, so the file dated D is what selection sees on D+1.
+Emitting one per session is what makes the selection point-in-time rather
+than a day's lookahead.
+
+### Where each column comes from
+
+| Column | Source | Confidence |
+|---|---|---|
+| ticker, membership | [`fja05680/sp500`](https://github.com/fja05680/sp500), a point-in-time reconstruction of S&P 500 membership back to 1996 | good; effective dates can be a day or two off a real rebalance |
+| security identifier | computed — `leandata/lean/identifiers.py` | exact; pinned in tests against LEAN's own bundled SPY universe file |
+| weight | reconstructed — price x shares outstanding, normalised within the day's roster | a proxy; see below |
+| shares held, market value | not available | written empty |
+
+**Membership is not the same thing as the fund.** The dataset says who was in
+the *index*; SPY tracks it but holds its own book. For a fund that replicates
+a 500-name index in full, the difference is small and it is the only free
+option.
+
+**Weight is a full-capitalisation proxy, not the fund's published weight.**
+`leandata/weights.py` computes price x shares outstanding and normalises
+within each day's roster. Three differences from the real sheet:
+
+* **Full cap, not float-adjusted.** S&P excludes closely-held shares, so a
+  company with a large strategic holder comes out heavier here.
+* **Filings-dated share counts.** Yahoo reports shares outstanding a few
+  times a year, so a buyback lands on the date it was reported.
+* **Dual-class names are counted twice.** Yahoo reports Alphabet's *total*
+  share count against both `GOOGL` and `GOOG`, so the pair carries about
+  double its true combined weight, and the denominator every other weight is
+  divided by is a few percent too large. That scales all weights by a
+  constant, so a ranking is unaffected — but do not quote the number as SPY's.
+
+For the use these weights are put to here — rank, take the top 200 — none of
+that matters much. It would matter a great deal if you sized positions by it.
+
+Checked against reality on 2021-09-16, the proxy puts AAPL at 6.08% against
+SPY's ~6.0% and MSFT at 5.67% against ~5.8%; the Alphabet pair is the visible
+outlier at 9.5% combined against ~4.3%.
+
+### Two ways a constituents universe can quietly lie
+
+Both are reported by the build rather than swallowed, because both change
+what a backtest means.
+
+**Companies that were acquired are gone.** 45 of the 644 tickers that passed
+through the S&P 500 between 2020 and 2026 have no history at Yahoo at all —
+`ATVI`, `TWTR`, `SIVB`, `FRC`, `XLNX` and 40 others. They are listed in the
+universe files with an empty weight, so the file still records that they were
+members, but a strategy that ranks by weight will never select them. That is
+survivorship bias, it is not fixable from a free source, and it is worth
+remembering that `SIVB` and `FRC` are in that list: two of the names a 2023
+backtest most wants to be able to hold.
+
+**Companies that were renamed would be gone too, without a correction.** The
+roster names each company by the ticker it traded under at the time; Yahoo
+answers only to today's. `BK` returns *Quote not found*, not Bank of New York
+Mellon. `leandata/reference/ticker-renames-usa.csv` maps the 24 renames in
+this window onto their successors — that is what takes the missing count from
+69 down to 45, and what recovers `UTX`/`RTX`, `ANTM`/`ELV`, `MMC`/`MRSH` and
+`BK`/`BNY`, all top-200 names. See
+[`leandata/reference/README.md`](leandata/reference/README.md) for how a row
+qualifies and why two candidates are deliberately excluded.
+
+### Measured result
+
+Over 2021-09-16 → 2026-09-15 on this data, against buy-and-hold on the same
+data folder and the same window:
+
+| Statistic | Topological Portfolio | SPY Buy & Hold |
+|---|---|---|
+| Compounding Annual Return | 10.827% | 12.249% |
+| Drawdown | 22.000% | 23.600% |
+| Sharpe Ratio | 0.33 | 0.396 |
+| Sortino Ratio | 0.378 | 0.457 |
+| Total Orders | 2,565 | 1 |
+| Portfolio Turnover | 0.85% | 0.05% |
+
+The clustered portfolio gave up about 1.4 points of annual return for about
+1.6 points of drawdown over this particular window — which is one window, on
+reconstructed weights, without the names that were acquired.
+
+The baseline is a variant rather than the run's own benchmark because
+`SetBenchmark` does not use it: LEAN hard-codes the internal benchmark feed
+to hourly in backtesting
+(`Lean/Engine/DataFeeds/UniverseSelection.cs:337`), and a converted folder
+has daily bars only. So `Alpha`, `Beta`, `Treynor Ratio` and
+`Information Ratio` come out of a constituents backtest as zero — not because
+the strategy has no exposure, but because the benchmark series is empty.
+Everything else in the statistics table is unaffected.
+
 ## Tests
 
 ```
@@ -337,3 +502,18 @@ verified by the anchor run above.
 The conversion tests add `tests/test_factor_cross_validation.py`, which
 rebuilds SPY and AAPL from committed snapshots and checks them against the
 bundled LEAN files. It skips itself if `../Lean` is absent.
+
+`tests/test_constituents.py` covers the universe half. The identifier and
+file-layout assertions are pinned to bytes copied out of LEAN's own
+`equity/usa/universes/etf/spy/20201130.csv`, so an arithmetic or format change
+fails against LEAN rather than against itself. The weight tests are
+hand-computed, including the split case — a share count filed before a split
+and carried past it is the one way the reconstruction can be wrong without
+looking wrong.
+
+`test_variants.py` imports and initializes every algorithm, so running the
+suite needs the optional stack that `topological_portfolio.py` imports:
+
+```
+uv sync --group topological
+```

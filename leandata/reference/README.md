@@ -40,3 +40,45 @@ as of April 2026.
 
 **To update**, add a row per FOMC change: effective date, then the new upper
 bound of the target range.
+
+## `ticker-renames-usa.csv`
+
+Read by `leandata.tickers.load_renames` and applied by the `universe`
+command, which maps an index roster's ticker onto the one a price vendor
+answers to before downloading.
+
+**Why it is needed.** The membership dataset names each company by the ticker
+it traded under *at the time*, which is the point of a point-in-time roster.
+Yahoo only answers to the ticker a company trades under *today*: a request
+for `BK` returns `Quote not found for symbol: BK`, not Bank of New York
+Mellon's history. Without this table the build silently drops every company
+that has been renamed since the window opened — and because a rename is far
+more common among large caps than a delisting, the names lost are
+disproportionately ones a weight-ranked universe would have selected. Twenty
+of the twenty-four rows below were in the top 200 of the S&P 500 at some
+point in 2020–2026.
+
+**What qualifies.** A rename, not an acquisition. The test is whether the
+successor's price series extends back *before* the change: `BNY` has bars
+from 2019 because it is the same security under a new symbol, while `COIN` —
+added the day `DFS` left — starts at its own IPO, because Discover was bought
+rather than renamed. Every row here was checked that way and only rows that
+pass are listed. Companies that were genuinely acquired stay off the list and
+out of the data folder; that gap is real and is reported by the build.
+
+**Two cases deliberately excluded.** `DISCK` (Discovery's Series C shares)
+would map onto `WBD` alongside `DISCA` and be counted twice in the same day's
+index weight. `RTN` (Raytheon) was acquired by United Technologies rather
+than renamed — `UTX` is the row that carries that history forward.
+
+**Effect on the ticker seen in a backtest.** The successor's spelling is used
+for the whole window, so a 2021 universe file says `BNY` where the index said
+`BK`. LEAN's own map files express this properly, as a dated rename inside
+one security's history; reproducing that here would mean teaching
+`leandata.lean.mapfiles` about rename chains. The prices are the same
+company's either way, so the difference is in the label rather than in any
+number.
+
+**Source.** Each row was derived from the membership dataset itself — a
+company leaving the roster on the same day another joins — and then confirmed
+against the successor's price history. Last checked 2026-09-16.

@@ -28,3 +28,7 @@ data/alternative/*
 # left behind means a crashed run.
 *.zip.tmp
 *.csv.tmp
+
+# Constituents universe build: hundreds of symbols plus one universe file per
+# trading day, all regenerable from one `universe` command.
+data-sp500/

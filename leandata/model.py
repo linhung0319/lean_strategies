@@ -8,6 +8,7 @@ Nothing here knows about LEAN's file format, and nothing here knows about any
 particular vendor. Keeping that true is what makes adding a new source cheap.
 """
 
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
@@ -246,3 +247,120 @@ def _validate_events(frame: pd.DataFrame, name: str, column: str) -> None:
 def _first_bad(index: pd.DatetimeIndex, mask) -> str:
     position = int(np.argmax(mask))
     return f"row {position} ({index[position]})"
+
+
+@dataclass(frozen=True)
+class IndexMembership:
+    """Point-in-time membership of an index, as a list of change rows.
+
+    ``changes`` is sorted by date and each entry carries the *complete* roster
+    as of that date, not a delta -- which makes ``members_on`` a bisect and
+    leaves no way for a missed delta to corrupt every later date.
+
+    Tickers are the index provider's, normalised to upper case. Mapping them
+    onto a vendor's spelling or onto LEAN's is the caller's job: the same
+    company is ``BRK.B`` here, ``BRK-B`` at Yahoo and ``BRKB`` in a LEAN data
+    folder, and this model deliberately takes no side.
+    """
+
+    name: str
+    changes: tuple[tuple[date, tuple[str, ...]], ...]
+    provenance: Provenance | None = None
+
+    def __post_init__(self) -> None:
+        if not self.changes:
+            raise ValidationError(f"IndexMembership {self.name!r} has no rows")
+        days = [day for day, _ in self.changes]
+        if days != sorted(days):
+            raise ValidationError(f"IndexMembership {self.name!r} rows must be sorted by date")
+        if len(set(days)) != len(days):
+            raise ValidationError(f"IndexMembership {self.name!r} has duplicate dates")
+        for day, members in self.changes:
+            if not members:
+                raise ValidationError(f"IndexMembership {self.name!r} has an empty roster on {day}")
+
+    @property
+    def first_date(self) -> date:
+        return self.changes[0][0]
+
+    @property
+    def last_date(self) -> date:
+        return self.changes[-1][0]
+
+    def members_on(self, day: date) -> tuple[str, ...]:
+        """The roster in force on ``day``; empty before the first row.
+
+        The roster stays in force until the next change row, so a date past
+        the last row returns the last known roster rather than nothing.
+        """
+        days = [entry[0] for entry in self.changes]
+        position = bisect_right(days, day)
+        return self.changes[position - 1][1] if position else ()
+
+    def union(self, start: date | None = None, end: date | None = None) -> tuple[str, ...]:
+        """Every ticker that is a member at any point in the window.
+
+        This is the download list: a backtest over the window has to be able
+        to price anything that could have been selected during it.
+        """
+        members: set[str] = set()
+        for index, (day, roster) in enumerate(self.changes):
+            next_day = self.changes[index + 1][0] if index + 1 < len(self.changes) else None
+            if end is not None and day > end:
+                break
+            # A roster that was replaced before the window opened never
+            # overlaps it, but the one in force *at* the open does.
+            if start is not None and next_day is not None and next_day <= start:
+                continue
+            members.update(roster)
+        return tuple(sorted(members))
+
+
+CONSTITUENT_COLUMNS: Final = ("weight", "shares_held", "market_value")
+
+
+@dataclass(frozen=True)
+class ConstituentPanel:
+    """What an ETF held, per day -- the canonical form of a universe file.
+
+    ``rows`` is indexed by ``(date, ticker)`` and carries the three optional
+    numbers LEAN's ``ETFConstituentUniverse`` reads. ``weight`` is a fraction
+    of the fund, not a percentage. Any of the three may be NaN, which the
+    writer renders as an empty field and LEAN reads back as null -- that is
+    the honest representation of a number a free data source cannot supply.
+    """
+
+    etf: SymbolSpec
+    rows: pd.DataFrame
+    provenance: Provenance | None = None
+
+    def __post_init__(self) -> None:
+        frame = self.rows
+        if not isinstance(frame, pd.DataFrame):
+            raise ValidationError(f"rows must be a DataFrame, got {type(frame).__name__}")
+        if tuple(frame.columns) != CONSTITUENT_COLUMNS:
+            raise ValidationError(
+                f"rows.columns must be exactly {CONSTITUENT_COLUMNS}, got {tuple(frame.columns)}"
+            )
+        if not isinstance(frame.index, pd.MultiIndex) or frame.index.nlevels != 2:
+            raise ValidationError("rows.index must be a 2-level MultiIndex of (date, ticker)")
+        if list(frame.index.names) != ["date", "ticker"]:
+            raise ValidationError(f"rows.index.names must be ['date', 'ticker'], got {frame.index.names}")
+        if len(frame) == 0:
+            raise ValidationError("a ConstituentPanel must hold at least one row")
+        if frame.index.has_duplicates:
+            duplicate = frame.index[frame.index.duplicated()][0]
+            raise ValidationError(f"rows.index must be unique; {duplicate} appears twice")
+        weight = frame["weight"].to_numpy(dtype="float64", copy=False)
+        present = ~np.isnan(weight)
+        if (weight[present] < 0).any():
+            raise ValidationError("rows.weight must be >= 0 where it is known")
+
+    @property
+    def dates(self) -> list[date]:
+        level = self.rows.index.get_level_values("date").unique()
+        return sorted({pd.Timestamp(value).date() for value in level})
+
+    @property
+    def tickers(self) -> tuple[str, ...]:
+        return tuple(sorted(set(self.rows.index.get_level_values("ticker"))))

@@ -1,6 +1,7 @@
 """Command line for the data conversion pipeline.
 
     convert   download a symbol and write it into a LEAN data folder
+    universe  download a whole index and write an ETF constituents universe
     verify    diff a generated symbol against another LEAN data folder
     check     report whether a data folder is complete enough for a run
     snapshot  save a source's raw output as a replayable CSV pair
@@ -11,16 +12,21 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
+from .constituents import DEFAULT_PAUSE_SECONDS, build_constituent_universe
 from .errors import LeanDataError
 from .lean import overlay
 from .lean.writer import LeanDataWriter
 from .model import Resolution
 from .snapshot import write_snapshot
-from .sources import available, get_source
+from .sources import available, available_membership, get_membership_source, get_source
 from .sources.base import FetchRequest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = REPO_ROOT / "data"
+# A constituents build re-downloads the ETF over its own window, which would
+# overwrite the SPY that compare_datasets.py pins to 2021-03-31. Its own
+# folder keeps that comparison reproducible.
+DEFAULT_CONSTITUENTS_OUT = REPO_ROOT / "data-sp500"
 DEFAULT_LEAN_DATA = REPO_ROOT.parent / "Lean" / "Data"
 DEFAULT_FIXTURES = REPO_ROOT / "tests" / "fixtures"
 
@@ -65,6 +71,37 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument("--market", default="usa")
     convert.add_argument("--no-overlay", action="store_true", help="skip mirroring LEAN's reference data")
     convert.add_argument("--refresh-overlay", action="store_true")
+
+    universe = commands.add_parser(
+        "universe", help="download an index and write an ETF constituents universe"
+    )
+    universe.add_argument("--etf", default="SPY", help="the ETF the universe files are named after")
+    universe.add_argument("--source", default="yfinance", choices=available())
+    universe.add_argument("--membership", default="sp500-github", choices=available_membership())
+    universe.add_argument(
+        "--membership-file",
+        type=Path,
+        help="replay a saved membership CSV instead of downloading; pins the roster",
+    )
+    universe.add_argument("--start", type=parse_date, required=True, help="inclusive, YYYY-MM-DD")
+    universe.add_argument("--end", type=parse_date, required=True, help="inclusive, YYYY-MM-DD")
+    universe.add_argument("--out", type=Path, default=DEFAULT_CONSTITUENTS_OUT)
+    universe.add_argument("--lean-data", type=Path, default=DEFAULT_LEAN_DATA)
+    universe.add_argument(
+        "--cache",
+        type=Path,
+        help="snapshot cache directory; defaults to <out>/.cache",
+    )
+    universe.add_argument("--market", default="usa")
+    universe.add_argument("--etf-exchange-code", default="P")
+    universe.add_argument("--exchange-code", default="Q", help="map file column 3 for constituents")
+    universe.add_argument(
+        "--pause", type=float, default=DEFAULT_PAUSE_SECONDS,
+        help="seconds to wait between vendor requests; cached symbols never wait",
+    )
+    universe.add_argument("--refresh", action="store_true", help="ignore the snapshot cache")
+    universe.add_argument("--no-overlay", action="store_true")
+    universe.add_argument("--refresh-overlay", action="store_true")
 
     verify = commands.add_parser("verify", help="diff generated files against another data folder")
     verify.add_argument("--ticker", required=True)
@@ -116,6 +153,55 @@ def command_convert(args) -> int:
         if rates:
             print(f"rate      curve {rates[0]} -> {rates[1]}, held flat after that")
             print(overlay.stale_rate_warning(rates[1], history.last_date) or "", end="")
+    missing = overlay.missing_reference_data(args.out)
+    if missing:
+        print(f"WARNING   {args.out} is missing reference data: "
+              f"{', '.join(str(path) for path in missing)}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def command_universe(args) -> int:
+    membership_options = {"path": args.membership_file} if args.membership_file else {}
+    membership_source = get_membership_source(args.membership, **membership_options)
+    membership = membership_source.fetch_membership()
+
+    cache = args.cache or (args.out / ".cache")
+    membership_file = None
+    if not args.membership_file:
+        # Pin the roster next to the data it produced, so the build can be
+        # replayed after upstream rewrites the file in place.
+        membership_file = membership_source.save(cache / "membership" / f"{args.membership}.csv")
+        print(f"pinned    {membership_file}")
+
+    report = build_constituent_universe(
+        etf_ticker=args.etf,
+        membership=membership,
+        source=get_source(args.source),
+        out=args.out,
+        start=args.start,
+        end=args.end,
+        cache=cache,
+        market=args.market,
+        etf_exchange_code=args.etf_exchange_code,
+        constituent_exchange_code=args.exchange_code,
+        refresh=args.refresh,
+        pause_seconds=args.pause,
+    )
+    report.membership_file = membership_file or args.membership_file
+    print(report.describe())
+
+    if not args.no_overlay:
+        copied = overlay.ensure_overlay(args.out, args.lean_data, refresh=args.refresh_overlay)
+        for path in copied:
+            print(f"mirrored  {path}")
+        for row in overlay.extend_interest_rates(args.out):
+            print(f"rate      appended {row}")
+        rates = overlay.interest_rate_range(args.out)
+        if rates:
+            print(f"rate      curve {rates[0]} -> {rates[1]}, held flat after that")
+            print(overlay.stale_rate_warning(rates[1], args.end) or "", end="")
+
     missing = overlay.missing_reference_data(args.out)
     if missing:
         print(f"WARNING   {args.out} is missing reference data: "
@@ -251,6 +337,7 @@ def _sample(items, limit: int) -> str:
 
 COMMANDS = {
     "convert": command_convert,
+    "universe": command_universe,
     "verify": command_verify,
     "check": command_check,
     "snapshot": command_snapshot,

@@ -19,6 +19,16 @@ dev = [
 data = [
     "yfinance>=0.2.65",
 ]
+# Same reasoning as `data`, and more of it: umap-learn pulls numba and
+# llvmlite, ~150 MB that every other backtest would otherwise carry. Unlike
+# `data` these are needed *during* a run, not before one -- algorithms/
+# topological_portfolio.py imports them -- so a run of that strategy has to
+# be `uv run --group topological run_local.py ...`.
+topological = [
+    "kmapper>=2.0",
+    "scikit-learn>=1.5",
+    "umap-learn>=0.5",
+]
 
 [tool.uv]
 default-groups = ["dev"]

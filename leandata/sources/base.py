@@ -5,7 +5,7 @@ from datetime import date
 from typing import ClassVar, Protocol, runtime_checkable
 
 from ..errors import EmptyHistoryError, UnsupportedResolutionError
-from ..model import Resolution, SecurityHistory
+from ..model import IndexMembership, Resolution, SecurityHistory
 
 
 @dataclass(frozen=True)
@@ -62,3 +62,18 @@ class BaseSource:
                 f"source {self.name!r} returned no {request.resolution.value} bars for "
                 f"{request.ticker} over {window}"
             )
+
+
+@runtime_checkable
+class MembershipSource(Protocol):
+    """Turn a vendor's index-membership file into the canonical IndexMembership.
+
+    Separate from ``DataSource`` because the two answer different questions --
+    *what was in the index* and *what did it trade at* -- and almost never come
+    from the same vendor.
+    """
+
+    name: ClassVar[str]
+
+    def fetch_membership(self) -> IndexMembership:
+        ...

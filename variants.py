@@ -20,6 +20,8 @@ ALGORITHM_CLASSES = {
     "spy_momentum": "SpyMomentum",
     "stock_buy_and_hold": "StockBuyAndHold",
     "stock_ma_entry_exit": "StockMaEntryExit",
+    "stock_monthly_rebalance": "StockMonthlyRebalance",
+    "topological_portfolio": "TopologicalPortfolio",
 }
 
 VARIANTS = {
@@ -65,6 +67,41 @@ VARIANTS.update(
         "NVDA 200-day MA Entry/Exit": ("stock_ma_entry_exit", {**NVDA_WINDOW, "ma_period": 200}),
         "NVDA 50-day MA Entry/Exit": ("stock_ma_entry_exit", {**NVDA_WINDOW, "ma_period": 50}),
     }
+)
+
+# Constituents universe. Needs the folder built by the `universe` command and
+# the ML stack from the `topological` dependency group:
+#   uv run --group data convert_data.py universe --etf SPY \
+#       --start 2020-01-02 --end 2026-09-15 --out data-sp500
+#   uv run --group topological run_local.py "Topological Portfolio" \
+#       --data-folder data-sp500
+VARIANTS["Topological Portfolio"] = (
+    "topological_portfolio",
+    {
+        "start_date": "2021-09-16",
+        "end_date": "2026-09-15",
+        "history_lookback": 150,
+        "recalibrate_period": 125,
+        "universe_size": 200,
+    },
+)
+
+# Its like-for-like baseline. LEAN's internal benchmark feed is hourly in
+# backtesting (Lean/Engine/DataFeeds/UniverseSelection.cs:337), so a daily-only
+# data folder leaves Alpha, Beta and Treynor at zero -- running buy-and-hold
+# over the same window and the same data folder is how the comparison gets
+# made here instead.
+VARIANTS["SPY Buy & Hold 2021-2026"] = (
+    "stock_buy_and_hold",
+    {"ticker": "SPY", "start_date": "2021-09-16", "end_date": "2026-09-15", "weight": 1.0},
+)
+
+# The local-vs-QuantConnect comparison run. Its window is deliberately not
+# NVDA_WINDOW: 2020-2025 straddles 2021-03-31, where LEAN's bundled data stops
+# and the converted yfinance data takes over.
+VARIANTS["NVDA Monthly Rebalance 60/40"] = (
+    "stock_monthly_rebalance",
+    {"ticker": "NVDA", "start_date": "2020-01-01", "end_date": "2025-12-31", "weight": 0.60},
 )
 
 
