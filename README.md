@@ -348,6 +348,10 @@ constituents dataset is not part of the free LEAN distribution, so the whole
 thing — membership, weights, identifiers, and bars for every ticker that was
 ever a member — has to be built locally.
 
+For what that strategy actually *does*, step by step and with the real
+intermediate output at each stage, see
+[`research/topological_portfolio/strategy-explained.md`](research/topological_portfolio/strategy-explained.md).
+
 ```
 uv sync --group data --group topological
 
