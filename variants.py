@@ -22,6 +22,7 @@ ALGORITHM_CLASSES = {
     "stock_ma_entry_exit": "StockMaEntryExit",
     "stock_monthly_rebalance": "StockMonthlyRebalance",
     "topological_portfolio": "TopologicalPortfolio",
+    "tech_ema_reversion": "TechEmaReversion",
 }
 
 VARIANTS = {
@@ -94,6 +95,19 @@ VARIANTS["Topological Portfolio"] = (
 VARIANTS["SPY Buy & Hold 2021-2026"] = (
     "stock_buy_and_hold",
     {"ticker": "SPY", "start_date": "2021-09-16", "end_date": "2026-09-15", "weight": 1.0},
+)
+
+# Top-5 Technology mean reversion. Same data folder as the topological run:
+#   uv run run_local.py "Tech Top5 EMA Reversion" --data-folder data-sp500
+VARIANTS["Tech Top5 EMA Reversion"] = (
+    "tech_ema_reversion",
+    {
+        "start_date": "2021-09-16",
+        "end_date": "2026-09-15",
+        "universe_size": 5,
+        "ema_period": 100,
+        "max_period": 252,
+    },
 )
 
 # The local-vs-QuantConnect comparison run. Its window is deliberately not

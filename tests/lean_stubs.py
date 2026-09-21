@@ -184,6 +184,10 @@ class QCAlgorithm:
         self.time_rules = _Recorder("time_rules")
         self.securities = {}
         self.universe_selection_models = []
+        self.universes = []
+        # self.universe.etf(...) and friends only build a definition that
+        # add_universe then registers; recording the call is all a test needs.
+        self.universe = _Recorder("universe")
 
     # -- configuration -------------------------------------------------
     def set_start_date(self, year, month, day):
@@ -208,6 +212,11 @@ class QCAlgorithm:
         # LEAN calls create_universes later, once the engine is running; a
         # test that wanted that would have to stand up a universe too.
         self.universe_selection_models.append(model)
+
+    def add_universe(self, definition):
+        universe = types.SimpleNamespace(definition=definition, selected=[])
+        self.universes.append(universe)
+        return universe
 
     def set_warm_up(self, period, resolution=None):
         self.warm_up_period = period

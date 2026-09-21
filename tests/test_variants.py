@@ -59,6 +59,8 @@ INT_PARAMETERS = {
     "lookback",
     "lookback_months",
     "ma_period",
+    "ema_period",
+    "max_period",
     "recalibrate_period",
     "universe_size",
 }
