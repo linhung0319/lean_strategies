@@ -98,20 +98,22 @@ def lean_ema(close, n):
     return pd.Series(out, index=close.index)
 
 
-def universe_by_day(technology):
-    """Top-5 Technology names by constituent weight, keyed by the trading day
-    they are in effect on: the file dated D is what selection sees on D+1."""
+def universe_by_day(keep=None, exclude=()):
+    """Top-5 names by constituent weight, keyed by the trading day they are in
+    effect on: the file dated D is what selection sees on D+1. `keep` limits
+    the ranking to one sector; None ranks the whole index."""
     files = sorted((DATA / "universes" / "etf" / "spy").glob("*.csv"))
     selected = {}
     for path in files:
         rows = [line.split(",") for line in path.read_text().splitlines() if line.strip()]
-        tech = sorted((float(r[3]), r[0]) for r in rows if r[3] and r[0] in technology)
-        selected[pd.Timestamp(path.stem)] = [t for _, t in tech[-SIZE:]]
+        ranked = sorted((float(r[3]), r[0]) for r in rows
+                        if r[3] and r[0] not in exclude and (keep is None or r[0] in keep))
+        selected[pd.Timestamp(path.stem)] = [t for _, t in ranked[-SIZE:]]
     return pd.Series(selected)
 
 
-def orders():
-    result = json.loads((RESULTS / "tech_top5_ema_reversion" / "TechEmaReversion.json")
+def orders(slug="tech_top5_ema_reversion"):
+    result = json.loads((RESULTS / slug / "TechEmaReversion.json")
                         .read_text(encoding="utf-8"))
     rows = []
     for order in result["orders"].values():

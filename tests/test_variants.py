@@ -64,7 +64,7 @@ INT_PARAMETERS = {
     "recalibrate_period",
     "universe_size",
 }
-UPPERCASE_STRING_PARAMETERS = {"frequency", "ticker"}
+UPPERCASE_STRING_PARAMETERS = {"frequency", "ticker", "sector", "exclude"}
 DATE_PARAMETERS = {"start_date", "end_date"}
 
 

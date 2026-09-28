@@ -53,7 +53,16 @@ class TechEmaReversion(QCAlgorithm):
         self.settings.automatic_indicator_warm_up = True
         self.settings.seed_initial_prices = True
 
+        # "TECHNOLOGY" is the original's filter; "ANY" drops it and ranks the
+        # whole index, which is what the largest-five-overall comparison runs.
+        self.sector = str(self.get_parameter("sector", "TECHNOLOGY")).upper()
         self.universe_size = int(self.get_parameter("universe_size", 5))
+        # Tickers to drop before ranking, comma separated. Needed for the
+        # index-wide run: the local weight proxy credits Alphabet's whole share
+        # count to both GOOGL and GOOG, so the pair holds two of the five slots
+        # on 92% of days. Excluding GOOG leaves one Alphabet line.
+        self.exclude = str(self.get_parameter("exclude", "")).upper()
+        self._excluded = {t.strip() for t in self.exclude.split(",") if t.strip()}
         self.ema_period = int(self.get_parameter("ema_period", 100))
         self.max_period = int(self.get_parameter("max_period", 252))
 
@@ -74,7 +83,8 @@ class TechEmaReversion(QCAlgorithm):
     def _select(self, constituents):
         filtered = [
             c for c in constituents
-            if c.weight and c.symbol.value in TECHNOLOGY
+            if c.weight and c.symbol.value not in self._excluded
+            and (self.sector == "ANY" or c.symbol.value in TECHNOLOGY)
         ]
         return [c.symbol for c in sorted(filtered, key=lambda c: c.weight)[-self.universe_size:]]
 

@@ -110,6 +110,17 @@ VARIANTS["Tech Top5 EMA Reversion"] = (
     },
 )
 
+# The same rules over the whole index instead of Technology only. The second
+# one drops GOOG: the weight proxy credits Alphabet's full share count to both
+# share classes, so without it the pair holds two of the five slots.
+_TOP5 = {"start_date": "2021-09-16", "end_date": "2026-09-15", "universe_size": 5,
+         "ema_period": 100, "max_period": 252, "sector": "ANY"}
+
+VARIANTS["SP500 Top5 EMA Reversion"] = ("tech_ema_reversion", dict(_TOP5))
+VARIANTS["SP500 Top5 EMA Reversion (one Alphabet)"] = (
+    "tech_ema_reversion", {**_TOP5, "exclude": "GOOG"},
+)
+
 # The local-vs-QuantConnect comparison run. Its window is deliberately not
 # NVDA_WINDOW: 2020-2025 straddles 2021-03-31, where LEAN's bundled data stops
 # and the converted yfinance data takes over.

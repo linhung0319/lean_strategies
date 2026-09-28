@@ -284,14 +284,153 @@ self.set_holdings(security, 1 / len(self._universe.selected))   # = 0.2
 最可能影響結果的是**第五名是誰**，因為第五名附近的名次本來就很接近，股數資料的
 更新時間差一點，排名就可能不同。前四名則不受影響。
 
+---
+
+# 附錄：改成「S&P 500 前五大」會怎樣？
+
+一個很自然的問題：最近五年科技股大漲，**S&P 500 前五大應該差不多就是科技股**，
+那把產業篩選拿掉，結果應該差不多吧？
+
+**差很多。** 規則完全沒改，只把選股池從「科技股前五大」換成「S&P 500 前五大」：
+
+```
+uv run run_local.py "SP500 Top5 EMA Reversion (one Alphabet)" --data-folder data-sp500
+uv run python research/tech_ema_reversion/compare_universes.py
+```
+
+![三種股票池的比較](fig7-universe-comparison.png)
+
+| | 科技股前五大 | S&P 500 前五大 | S&P 500 前五大（原樣）| SPY |
+|---|---|---|---|---|
+| 期末資產 | **41.0 萬** | 24.6 萬 | 17.7 萬 | 17.8 萬 |
+| 年化報酬 | **32.6%** | 19.8% | 12.1% | 12.2% |
+| 最大回撤 | 36.4% | 42.0% | 37.9% | 23.6% |
+| Sharpe | 0.85 | 0.55 | 0.33 | 0.40 |
+| 下單次數 | 59 | 23 | 129 | 1 |
+
+（最後兩欄的差別是資料問題，下面〈兩個資料陷阱〉會說明。**該拿來比較的是
+第二欄的 19.8%。**）
+
+## 為什麼差這麼多：股票池根本不一樣
+
+直覺「前五大就是科技股」其實不成立。因為 Morningstar 的「科技股」不包含
+GOOGL、AMZN、META、TSLA，而這幾檔正好是市值最大的幾家公司。兩個股票池的
+交集只有 **AAPL、MSFT、NVDA** 三檔：
+
+| | 科技股前五大 | S&P 500 前五大 |
+|---|---|---|
+| 幾乎天天都在 | AAPL、MSFT、NVDA、AVGO | AAPL、MSFT、GOOGL、AMZN |
+| 第五名輪替 | ORCL、ADBE、CRM、CSCO、MU | NVDA（2023 之後）、TSLA、BRKB |
+
+![S&P 500 前五大的股票池](fig8-sp500-universe.png)
+
+跟科技股版本的股票池圖比，這張圖幾乎是「四條線一路到底」——五年只有 9 檔
+進過池子，而且大部分時間就是那四檔。
+
+### 為什麼 Morningstar 不把 GOOGL、AMZN、TSLA 算成科技股
+
+分類的原則是**看錢從哪裡來**，不是看公司用不用高科技。Morningstar 的方法論寫得
+很直白（[Morningstar Global Equity Classification Structure, 2019](https://advisor.morningstar.com/Enterprise/VTC/MorningstarGlobalEquityClassStructure2019v3.pdf)）：
+
+> 「equities are mapped into the industries that best reflect each company's
+> **largest source of revenue and income**.（股票被歸到最能反映其**最大營收與
+> 獲利來源**的產業。）」
+
+所以：
+
+| 公司 | 最大營收來源 | Morningstar 分類 |
+|---|---|---|
+| AAPL、MSFT、NVDA、AVGO | 賣硬體、晶片、軟體授權 | **Technology** |
+| GOOGL、META | 廣告（搜尋、社群版位）| Communication Services |
+| AMZN | 零售 | Consumer Cyclical |
+| TSLA | 賣車 | Consumer Cyclical |
+
+三個 sector 的官方定義也對得上：Technology 是
+「design, development, and support of computer operating systems and
+applications…computer equipment, data storage products, networking products,
+**semiconductors**, and components」；Communication Services 明確包含
+「advertising & marketing services…**interactive media** and content provider
+over internet」並直接點名 Alphabet 和 Facebook；Consumer Cyclical 則是
+「retail stores, **auto** and auto-parts manufacturers…」並直接點名 Amazon。
+
+換句話說，Google 是一家「用技術做廣告生意」的公司，Amazon 是「用技術做零售生意」
+的公司，Tesla 是「用技術做汽車生意」的公司 — 在這套分類裡，生意的種類才是重點。
+這也是為什麼 AVGO（賣晶片 + 企業軟體）穩穩落在科技股裡。
+
+順帶一提，這不是 Morningstar 獨有的看法：GICS 也在 2018 年做過類似的調整，
+把 Alphabet、Meta、Netflix 移進 Communication Services。
+
+### 關鍵是 NVDA 進場的時間，還有完全錯過 AVGO
+
+科技股版本賺的錢有 **七成**來自 NVDA 和 AVGO 兩檔：
+
+| 個股損益 | 科技股前五大 | S&P 500 前五大 |
+|---|---|---|
+| NVDA | **+128,421** | +67,220 |
+| AVGO | **+96,798** | 0（從未進過股票池）|
+| AAPL | +37,835 | +27,645 |
+| GOOGL | — | +33,065 |
+| MSFT | +16,958 | +13,755 |
+| AMZN | — | +12,862 |
+| TSLA | — | **−8,591** |
+
+兩個原因：
+
+1. **NVDA 進場晚了將近兩年。** 它從回測第一天就是「科技股前五大」，2022-01-19
+   以 **25.97** 買進。但它一直到 **2023-03-22** 才擠進 S&P 500 前五大
+   （因為要贏過 AMZN、GOOGL 這些巨無霸），第一次買進是 2023-10-23 的
+   **41.11**。一樣的股票、一樣的規則，只是晚了一步。
+2. **AVGO 完全沒機會。** 它在科技股池裡待了 94% 的日子、貢獻 +96,798；
+   但它的市值**從來沒真的進過 S&P 500 前五名**：五年 1,255 個交易日裡只有
+   2024-07-15 一天，而那一天是 10:1 分割造成的資料毛刺（跟下面 CMG 同一種
+   問題）。它真正的名次從 2021 年的第 20 名慢慢爬到 2026 年的第 8 名。所以
+   S&P 500 版本一張單都沒下過。
+3. **多了拖後腿的成員。** TSLA 在 2021 年底進過前五名，買在 305.62，
+   最後虧了 8,591。
+
+換句話說：**這個策略的報酬幾乎由「池子裡有沒有那兩檔飆股、什麼時候有」決定，
+而不是由買賣規則決定。** 產業篩選在這五年剛好把池子縮到最會漲的那個角落。
+
+## 兩個資料陷阱（本地資料才有的，不是策略的問題）
+
+**1. GOOGL 和 GOOG 會各佔一格。** 本地的市值是用「股價 × 流通股數」算的，
+而 Yahoo 把 Alphabet 的**全部**股數同時報給兩個股票類別，所以兩者權重一樣，
+在 **92% 的日子**同時擠進前五名。結果是 Alphabet 一家公司拿走 40% 的資金，
+還擠掉一檔真正的第五名。更糟的是兩者權重幾乎相同，名次每天互換，造成大量
+無意義的買賣——那一欄的 129 張單裡絕大多數都是 GOOGL/GOOG 的來回，年化因此
+被拉低到 12.1%。加上 `"exclude": "GOOG"` 之後剩 23 張單。
+
+> 如果要在 QuantConnect 上跑同一個策略，**建議先印出每天選到的 5 檔確認**：
+> Morningstar 的 `market_cap` 在雙類別股票上怎麼處理，值得自己驗證一次。
+
+**2. 有一天 CMG 變成全美第一大公司。** CMG 在 2024-06-26 以 50:1 分割，而
+資料裡 2024-06-25 的股數已經是分割後的 13.7 億股，股價卻還是分割前的 3283，
+於是那一天它的市值看起來是真實的 50 倍，排名第一。這是股數資料的日期對不齊
+造成的。所幸那天它沒有觸發買進訊號，所以沒有真的下單，但這類毛刺在用
+「股價 × 股數」當市值時隨時可能出現。
+
+## 所以對方的結果差很多，是跑錯了嗎？
+
+**不一定。** 同樣的規則套在 S&P 500 前五大上，本地跑出來是 19.8%（或沒處理
+Alphabet 重複的話 12.1%），跟科技股版的 32.6% 差一大截——**這個差距是真的，
+不是 bug。** 判斷對方是不是跑錯，可以看這幾點：
+
+- 對方的結果如果落在 **12%～20%** 這個區間，那跟這裡的結果一致，沒有問題。
+- 如果**明顯更低**（例如接近 0% 或負的），才值得懷疑，可以請他印出每天選到的
+  五檔，看看是不是 GOOGL/GOOG 佔掉兩格、或哪天冒出奇怪的公司。
+- 要對齊比較，兩邊的**回測期間**要一樣。這五年的結果對起訖日很敏感：2022 年
+  跌掉三成、2023 之後才是主升段。
+
 ## 想動手玩的話
 
-`variants.py` 的 `"Tech Top5 EMA Reversion"` 可以調三個參數：
+`variants.py` 的 `"Tech Top5 EMA Reversion"` 可以調這些參數：
 
 ```python
 "universe_size": 5,     # 前幾大
 "ema_period": 100,      # 買進用的 EMA 天數
 "max_period": 252,      # 賣出用的最高價天數
+"sector": "TECHNOLOGY", # 改成 "ANY" 就是不分產業，選 S&P 500 前五大
+"exclude": "GOOG",      # 排除掉的股票，逗號分隔
 ```
 
 改完重跑回測，再重跑 `explain_figures.py`，就會更新所有圖和數字。
