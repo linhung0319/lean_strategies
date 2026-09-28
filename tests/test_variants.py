@@ -63,6 +63,8 @@ INT_PARAMETERS = {
     "max_period",
     "recalibrate_period",
     "universe_size",
+    "liquidity_filter_size",
+    "portfolio_size",
 }
 UPPERCASE_STRING_PARAMETERS = {"frequency", "ticker", "sector", "exclude"}
 DATE_PARAMETERS = {"start_date", "end_date"}

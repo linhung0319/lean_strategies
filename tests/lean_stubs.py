@@ -179,7 +179,7 @@ class QCAlgorithm:
         self.orders = []
         self.settings = types.SimpleNamespace()
         self.schedule = _Recorder("schedule")
-        self.universe_settings = types.SimpleNamespace(resolution=None)
+        self.universe_settings = types.SimpleNamespace(resolution=None, schedule=_Recorder("schedule"))
         self.date_rules = _Recorder("date_rules")
         self.time_rules = _Recorder("time_rules")
         self.securities = {}

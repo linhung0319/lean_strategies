@@ -23,6 +23,7 @@ ALGORITHM_CLASSES = {
     "stock_monthly_rebalance": "StockMonthlyRebalance",
     "topological_portfolio": "TopologicalPortfolio",
     "tech_ema_reversion": "TechEmaReversion",
+    "momentum_effect": "MomentumEffect",
 }
 
 VARIANTS = {
@@ -119,6 +120,20 @@ _TOP5 = {"start_date": "2021-09-16", "end_date": "2026-09-15", "universe_size": 
 VARIANTS["SP500 Top5 EMA Reversion"] = ("tech_ema_reversion", dict(_TOP5))
 VARIANTS["SP500 Top5 EMA Reversion (one Alphabet)"] = (
     "tech_ema_reversion", {**_TOP5, "exclude": "GOOG"},
+)
+
+# 12-month momentum rotation over the 50 largest liquid names. Same data folder:
+#   uv run run_local.py "Momentum Effect Top5" --data-folder data-sp500
+VARIANTS["Momentum Effect Top5"] = (
+    "momentum_effect",
+    {
+        "start_date": "2021-09-16",
+        "end_date": "2026-09-15",
+        "lookback": 252,
+        "liquidity_filter_size": 100,
+        "universe_size": 50,
+        "portfolio_size": 5,
+    },
 )
 
 # The local-vs-QuantConnect comparison run. Its window is deliberately not
