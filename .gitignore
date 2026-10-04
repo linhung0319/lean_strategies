@@ -32,3 +32,6 @@ data/alternative/*
 # Constituents universe build: hundreds of symbols plus one universe file per
 # trading day, all regenerable from one `universe` command.
 data-sp500/
+
+# Same, for the DIA (Dow 30) universe built for puppies_of_the_dow.py.
+data-dow/

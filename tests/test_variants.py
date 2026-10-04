@@ -55,6 +55,7 @@ def test_every_algorithm_module_imports_and_defines_its_class():
 # parameter name — mirrors the `int(...)`, `float(...)`, `str(...).upper()`
 # and date-splitting calls in algorithms/*.py's initialize().
 INT_PARAMETERS = {
+    "dogs_size",
     "history_lookback",
     "lookback",
     "lookback_months",

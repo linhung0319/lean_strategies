@@ -24,6 +24,7 @@ ALGORITHM_CLASSES = {
     "topological_portfolio": "TopologicalPortfolio",
     "tech_ema_reversion": "TechEmaReversion",
     "momentum_effect": "MomentumEffect",
+    "puppies_of_the_dow": "PuppiesOfTheDow",
 }
 
 VARIANTS = {
@@ -134,6 +135,21 @@ VARIANTS["Momentum Effect Top5"] = (
         "universe_size": 50,
         "portfolio_size": 5,
     },
+)
+
+# Dogs/Puppies of the Dow over a DIA constituents universe. Needs its own folder:
+#   uv run --group data convert_data.py universe --etf DIA \
+#       --membership-file leandata/reference/dow-30-membership.csv \
+#       --start 2020-01-02 --end 2026-09-15 --out data-dow --cache data-sp500/.cache
+#   uv run run_local.py "Puppies of the Dow" --data-folder data-dow
+_DOW = {"start_date": "2021-09-16", "end_date": "2026-09-15", "dogs_size": 10}
+
+VARIANTS["Puppies of the Dow"] = ("puppies_of_the_dow", {**_DOW, "portfolio_size": 5})
+# The Dogs themselves: all ten highest yielders, 10% each.
+VARIANTS["Dogs of the Dow"] = ("puppies_of_the_dow", {**_DOW, "portfolio_size": 10})
+VARIANTS["DIA Buy & Hold 2021-2026"] = (
+    "stock_buy_and_hold",
+    {"ticker": "DIA", "start_date": "2021-09-16", "end_date": "2026-09-15", "weight": 1.0},
 )
 
 # The local-vs-QuantConnect comparison run. Its window is deliberately not

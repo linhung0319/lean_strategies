@@ -82,3 +82,34 @@ number.
 **Source.** Each row was derived from the membership dataset itself — a
 company leaving the roster on the same day another joins — and then confirmed
 against the successor's price history. Last checked 2026-09-16.
+
+## `dow-30-membership.csv`
+
+Replayed by the `universe` command through `--membership-file` to build the
+DIA constituents universe that `algorithms/puppies_of_the_dow.py` selects
+from. Same `date,tickers` layout as the S&P 500 roster: one row per change,
+each listing the whole index as of that date.
+
+**Why it is needed.** fja05680/sp500 covers the S&P 500 only, and nothing
+free publishes a point-in-time Dow roster as a file. The Dow changes rarely
+enough to enter by hand.
+
+**Source.** S&P Dow Jones Indices' announcements, cross-checked against
+<https://en.wikipedia.org/wiki/Historical_components_of_the_Dow_Jones_Industrial_Average>
+and, for the latest row, <https://press.spglobal.com/2026-06-23-Alphabet-Set-to-Join-and-Honeywell-International-to-Remain-in-Dow-Jones-Industrial-Average>.
+Last checked 2026-10-04.
+
+| Effective | In | Out |
+|---|---|---|
+| 2020-08-31 | AMGN, CRM, HON | XOM, PFE, RTX |
+| 2024-02-26 | AMZN | WBA |
+| 2024-11-08 | NVDA, SHW | DOW, INTC |
+| 2026-06-29 | GOOGL (class A) | VZ |
+
+The first row is the roster at the window's start. It lists `RTX` where the
+index held United Technologies until 2020-04-03; that is the same company
+under its later ticker, and no selection falls before 2021.
+
+**Known gap.** `WBA` has no vendor data (taken private 2025-08-28), so it is
+in the universe files with an empty weight and the strategy never selects it.
+`research/puppies_of_the_dow/strategy-explained.md` measures what that costs.
