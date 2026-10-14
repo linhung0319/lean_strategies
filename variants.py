@@ -25,6 +25,7 @@ ALGORITHM_CLASSES = {
     "tech_ema_reversion": "TechEmaReversion",
     "momentum_effect": "MomentumEffect",
     "puppies_of_the_dow": "PuppiesOfTheDow",
+    "pca_stat_arbitrage": "PcaStatArbitrageAlgorithm",
 }
 
 VARIANTS = {
@@ -151,6 +152,17 @@ VARIANTS["DIA Buy & Hold 2021-2026"] = (
     "stock_buy_and_hold",
     {"ticker": "DIA", "start_date": "2021-09-16", "end_date": "2026-09-15", "weight": 1.0},
 )
+
+# PCA residual mean reversion over the 20 most liquid names. Same data folder,
+# plus statsmodels and scikit-learn from the `pca` group:
+#   uv run --group pca run_local.py "PCA Stat Arbitrage" --data-folder data-sp500
+# The first is the code as written (which buys); the second flips the sign
+# into the shorts the strategy description talks about.
+_PCA = {"start_date": "2021-09-16", "end_date": "2026-09-15", "lookback_days": 60,
+        "pca_components": 3, "entry_z_score": -1.5, "universe_size": 20}
+
+VARIANTS["PCA Stat Arbitrage"] = ("pca_stat_arbitrage", {**_PCA, "side": 1})
+VARIANTS["PCA Stat Arbitrage (short)"] = ("pca_stat_arbitrage", {**_PCA, "side": -1})
 
 # The local-vs-QuantConnect comparison run. Its window is deliberately not
 # NVDA_WINDOW: 2020-2025 straddles 2021-03-31, where LEAN's bundled data stops

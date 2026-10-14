@@ -66,6 +66,9 @@ INT_PARAMETERS = {
     "universe_size",
     "liquidity_filter_size",
     "portfolio_size",
+    "lookback_days",
+    "pca_components",
+    "side",
 }
 UPPERCASE_STRING_PARAMETERS = {"frequency", "ticker", "sector", "exclude"}
 DATE_PARAMETERS = {"start_date", "end_date"}

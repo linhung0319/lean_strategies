@@ -29,6 +29,12 @@ topological = [
     "scikit-learn>=1.5",
     "umap-learn>=0.5",
 ]
+# algorithms/pca_stat_arbitrage.py imports both during a run, so that one is
+# `uv run --group pca run_local.py ...`.
+pca = [
+    "scikit-learn>=1.5",
+    "statsmodels>=0.14",
+]
 
 [tool.uv]
 default-groups = ["dev"]
