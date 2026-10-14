@@ -138,6 +138,20 @@ VARIANTS["Momentum Effect Top5"] = (
     },
 )
 
+# The same rules over 1997-2026, on a universe built back to 1996. Survivorship
+# bias grows the further back it goes -- read research/momentum_effect/
+# long-history.md before quoting it:
+#   uv run --group data convert_data.py universe --etf SPY #       --start 1996-01-02 --end 2026-09-15 --out data-sp500-long
+#   uv run run_local.py "Momentum Effect Top5 1997-2026" --data-folder data-sp500-long
+VARIANTS["Momentum Effect Top5 1997-2026"] = (
+    "momentum_effect",
+    {**VARIANTS["Momentum Effect Top5"][1], "start_date": "1997-02-03"},
+)
+VARIANTS["SPY Buy & Hold 1997-2026"] = (
+    "stock_buy_and_hold",
+    {"ticker": "SPY", "start_date": "1997-02-03", "end_date": "2026-09-15", "weight": 1.0},
+)
+
 # Dogs/Puppies of the Dow over a DIA constituents universe. Needs its own folder:
 #   uv run --group data convert_data.py universe --etf DIA \
 #       --membership-file leandata/reference/dow-30-membership.csv \
