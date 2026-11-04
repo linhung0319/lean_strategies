@@ -26,6 +26,7 @@ ALGORITHM_CLASSES = {
     "momentum_effect": "MomentumEffect",
     "puppies_of_the_dow": "PuppiesOfTheDow",
     "pca_stat_arbitrage": "PcaStatArbitrageAlgorithm",
+    "pairs_trading": "PairsTrading",
 }
 
 VARIANTS = {
@@ -177,6 +178,20 @@ _PCA = {"start_date": "2021-09-16", "end_date": "2026-09-15", "lookback_days": 6
 
 VARIANTS["PCA Stat Arbitrage"] = ("pca_stat_arbitrage", {**_PCA, "side": 1})
 VARIANTS["PCA Stat Arbitrage (short)"] = ("pca_stat_arbitrage", {**_PCA, "side": -1})
+
+# Gatev-Goetzmann-Rouwenhorst distance-method pairs trading. Same data folder:
+#   uv run run_local.py "Pairs Trading GGR" --data-folder data-sp500
+VARIANTS["Pairs Trading GGR"] = (
+    "pairs_trading",
+    {"start_date": "2021-09-16", "end_date": "2026-09-15", "formation_days": 252,
+     "trading_months": 6, "pair_count": 20, "entry_std": 2.0, "leg_weight": 0.05},
+)
+# The same rules from 1997, on the universe built back to 1996. Survivorship
+# bias applies as for the momentum long run:
+#   uv run run_local.py "Pairs Trading GGR 1997-2026" --data-folder data-sp500-long
+VARIANTS["Pairs Trading GGR 1997-2026"] = (
+    "pairs_trading", {**VARIANTS["Pairs Trading GGR"][1], "start_date": "1997-02-03"},
+)
 
 # The local-vs-QuantConnect comparison run. Its window is deliberately not
 # NVDA_WINDOW: 2020-2025 straddles 2021-03-31, where LEAN's bundled data stops
